@@ -252,3 +252,25 @@ nav.tabs button.active .badge { background: var(--accentSoft); color: var(--acce
 @media (max-width: 900px) {
   .board, .ugrid, .updgrid { grid-template-columns: 1fr; }
 }
+
+/* ---------- Phone (<=600px): single-column, tighter padding, no horizontal escape ---------- */
+@media (max-width: 600px) {
+  body { overflow-x: hidden; }                 /* final guard: never scroll the page sideways */
+  .hwrap { padding: 11px 14px; gap: 10px; }
+  main.page { padding: 16px 14px 60px; }
+  .strip { grid-template-columns: 1fr 1fr; gap: 10px; }   /* 2-up stat tiles instead of cramped */
+  .agrid, .board, .ugrid, .updgrid { grid-template-columns: 1fr; }
+  /* keep every panel within the viewport */
+  .panelcard, .upanel, .updb, .logterm, .strip > *, main.page { max-width: 100%; }
+  /* let long, unbreakable strings (tokens, hashes, URLs, log lines, message bodies) wrap
+     instead of forcing the card wider than the screen */
+  .mt, .mr, .cdesc, .memtext.open, .kvv, .ctag, .updb code, .ver,
+  .msgrow .mb, .sched .sb, .nameblock, .note { overflow-wrap: anywhere; word-break: break-word; }
+  .kv { flex-wrap: wrap; }
+  .kv .kvv { text-align: left; }
+  .meter { margin-left: 0; }
+  .filterrow { gap: 8px; }
+  .filterrow .search { margin-left: 0; max-width: none; }
+  .bars7 { gap: 6px; }
+  .btnrow button { padding: 11px 16px; }       /* comfortable tap targets */
+}
