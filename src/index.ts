@@ -37,8 +37,14 @@ async function main(): Promise<void> {
 
   // Phase 4: scheduler (cron -> queue), inter-agent bus, heartbeat-as-injected-
   // prompt (heartbeats are scheduled tasks of type 'heartbeat' — flat-rate, no SDK).
-  stops.push(startScheduler(cfg));
-  stops.push(startBus(cfg));
+  if (process.env.OFFICE_SCHEDULER_PAUSED)
+    logger.warn("OFFICE_SCHEDULER_PAUSED set — scheduler/heartbeats NOT started (incident mode)");
+  else
+    stops.push(startScheduler(cfg));
+  if (process.env.OFFICE_BUS_PAUSED)
+    logger.warn("OFFICE_BUS_PAUSED set — inter-agent bus NOT started (incident mode)");
+  else
+    stops.push(startBus(cfg));
 
   // Phase 5: dashboard HTTP API + web UI (bearer-auth, localhost-bound).
   stops.push(startServer(cfg));
