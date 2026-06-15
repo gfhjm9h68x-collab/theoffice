@@ -67,9 +67,17 @@ interface RLEntry {
 const rlMap = new Map<string, RLEntry>();
 
 function getClientIp(req: IncomingMessage): string {
+  // Prefer X-Real-IP: reverse proxies (nginx, Nginx Proxy Manager, Caddy) set this to
+  // the real client address and OVERWRITE any client-sent value, so it is trustworthy.
+  // X-Forwarded-For via $proxy_add_x_forwarded_for APPENDS the real IP, so a client can
+  // spoof the first hop — only fall back to it (last entry = real client) when X-Real-IP
+  // is absent.
+  const xri = req.headers["x-real-ip"];
+  if (typeof xri === "string" && xri.trim()) return xri.trim();
   const xff = req.headers["x-forwarded-for"];
-  if (typeof xff === "string") {
-    return xff.split(",")[0]?.trim() || "unknown";
+  if (typeof xff === "string" && xff.trim()) {
+    const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length) return parts[parts.length - 1]!;
   }
   return req.socket.remoteAddress || "unknown";
 }

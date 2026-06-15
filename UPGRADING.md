@@ -8,15 +8,22 @@ dashboard ⟳ Update button), skim the entries newer than your previous version.
 ## Dashboard Rate Limiting & Nginx (2026-06-15)
 
 The dashboard now enforces brute-force lockout rate limiting (401 errors) based on IP addresses.
-It uses the `X-Forwarded-For` header to determine the real client IP.
+To find the real client IP it reads `X-Real-IP` first, then falls back to the last hop of
+`X-Forwarded-For`, then the socket address.
 
-**⚠️ KÖTELEZŐ (ACTION REQUIRED) for reverse proxy setups:**
-If you run The Office behind Nginx, you **MUST** ensure the real client IP is forwarded. Add the following line to your Nginx `location` block:
+**Reverse proxy setups:**
+Most reverse proxies — including **Nginx Proxy Manager**, plain nginx, and Caddy — set
+`X-Real-IP` to the real client address by default and overwrite any client-sent value, so
+**no extra configuration is needed**: it works out of the box and cannot be spoofed.
+
+If your proxy does *not* send `X-Real-IP`, make sure it forwards the real client IP. For plain
+nginx, add to your `location` block:
 
 ```nginx
-proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Real-IP $remote_addr;
 ```
-If you skip this, all requests will be seen as coming from `127.0.0.1`, and one bad actor failing authentication will block *everyone* (including you) from the dashboard.
+If the backend can only ever see `127.0.0.1` (no real-IP header at all), one bad actor failing
+authentication would block *everyone* (including you) from the dashboard.
 
 ---
 
