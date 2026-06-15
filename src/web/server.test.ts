@@ -3,15 +3,31 @@ import { startServer, _setClock } from "./server.js";
 import { join } from "node:path";
 import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer as netCreateServer } from "node:net";
 
 const MOCK_TOKEN = "test-token";
+
+// Grab a free OS-assigned port per test. The server binds a FIXED port and only
+// LOGS an EADDRINUSE (never throws), so a hardcoded port that another process is
+// squatting would silently route the test's requests to the squatter — the exact
+// flake that made the 429 assertion read 401. An ephemeral port can't collide.
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = netCreateServer();
+    srv.unref();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const p = (srv.address() as { port: number }).port;
+      srv.close(() => resolve(p));
+    });
+  });
+}
 
 describe("Dashboard Rate Limiting", () => {
   let tempDir: string;
   let cfg: any;
   let stopServer: () => void;
   let currentMs: number;
-  let port = 3431;
 
   beforeEach(async () => {
     tempDir = join(tmpdir(), "theoffice-test-" + Math.random().toString(36).slice(2));
@@ -22,7 +38,7 @@ describe("Dashboard Rate Limiting", () => {
     _setClock(() => currentMs);
 
     cfg = {
-      web: { host: "127.0.0.1", port: port++, rateLimit: { maxFails: 3, windowMs: 1000, blockMs: 5000 } },
+      web: { host: "127.0.0.1", port: await freePort(), rateLimit: { maxFails: 3, windowMs: 1000, blockMs: 5000 } },
       paths: { dashboardTokenFile: join(tempDir, "store", ".dashboard-token") },
       owner: { timezone: "UTC" },
       channel: { provider: "none" }
