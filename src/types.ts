@@ -44,6 +44,11 @@ export interface AgentDef {
    * provider + restart = instant runtime swap.
    */
   runtime?: string;
+  /** Short role one-liner shown on the dashboard agent card (e.g. "CEO", "Infra & QA"). Optional. */
+  role?: string;
+  /** Per-agent identity color (hex) for the dashboard — monogram coin, kanban left-border, author
+   * chips, usage bars. Optional; the dashboard falls back to a deterministic palette when unset. */
+  color?: string;
 }
 
 /** Effective, fully-resolved engine config = deepMerge(platform, product, tenant). */

@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
+import { totalmem, freemem, cpus, loadavg, uptime as osUptime } from "node:os";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,8 @@ const MIME: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
   ".svg": "image/svg+xml",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
 };
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -227,6 +230,9 @@ async function handleApi(
       return {
         id: a.id,
         displayName: a.displayName,
+        handle: a.id,
+        role: a.role ?? "",
+        color: a.color ?? null,
         enabled: a.enabled,
         model: a.model ?? "default",
         profile: a.profile ?? "full",
@@ -257,6 +263,22 @@ async function handleApi(
   // GET /api/update/check — list commits this install is behind
   if (path === "/api/update/check" && m === "GET") {
     return json(res, 200, checkUpdates());
+  }
+  // GET /api/host — lightweight host/engine health for the dashboard Update view (uptime, cpu, mem).
+  if (path === "/api/host" && m === "GET") {
+    const cores = cpus().length || 1;
+    const memTotal = totalmem();
+    const memFree = freemem();
+    const cpuPct = Math.max(0, Math.min(100, Math.round((loadavg()[0]! / cores) * 100)));
+    return json(res, 200, {
+      uptimeSec: Math.round(osUptime()),
+      cpuPct,
+      cores,
+      memUsedBytes: memTotal - memFree,
+      memTotalBytes: memTotal,
+      runtime: "Node · container",
+      port: cfg.web.port,
+    });
   }
   // POST /api/update/apply {discard?} — pull + build + restart (engine bounces after the response).
   // A dirty working tree returns {ok:false,dirty:true,files} unless discard:true is sent (auto-stash + pull).
@@ -496,6 +518,7 @@ function parseJson(s: string): JsonBody | null {
 
 function serveStatic(res: ServerResponse, path: string): void {
   let rel = path === "/" ? "/index.html" : path;
+  if (rel.endsWith("/")) rel += "index.html"; // serve dir index (e.g. /mc/ -> /mc/index.html)
   // prevent path traversal
   const safe = normalize(rel).replace(/^(\.\.[/\\])+/, "");
   const file = join(UI_DIR, safe);
