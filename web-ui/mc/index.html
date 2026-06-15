@@ -7,6 +7,13 @@
     <!-- self-hosted IBM Plex (no external CDN on a private dashboard) -->
     <link rel="stylesheet" href="/mc/fonts/fonts.css" />
     <link rel="stylesheet" href="/mc/style.css" />
+    <!-- PWA: installable Mission Control (scope /mc/) -->
+    <link rel="manifest" href="/mc/manifest.webmanifest" />
+    <meta name="theme-color" content="#0b0c0e" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/mc/icon-192.png" />
   </head>
   <body>
     <!-- toggle between the two dashboards (additive; survives app.js render) -->
@@ -34,5 +41,48 @@
     </div>
 
     <script src="/mc/app.js"></script>
+
+    <!-- PWA install prompt — pops up a banner when the browser offers install -->
+    <div id="mc-install" style="display:none;position:fixed;left:12px;right:12px;bottom:14px;z-index:100000;
+         align-items:center;gap:12px;background:#15171a;border:1px solid #2a2e33;border-radius:14px;
+         padding:12px 14px;box-shadow:0 8px 30px rgba(0,0,0,.5);font-family:'IBM Plex Sans',system-ui,sans-serif">
+      <img src="/mc/icon-192.png" alt="" width="38" height="38" style="border-radius:9px;flex:0 0 auto" />
+      <div style="flex:1;min-width:0;color:#e9edf2">
+        <div style="font-weight:700;font-size:14px">Install Mission Control</div>
+        <div style="font-size:12px;color:#9aa4b2">Add it to your home screen as an app</div>
+      </div>
+      <button id="mc-install-yes" style="flex:0 0 auto;background:#10B981;color:#0b0c0e;border:0;border-radius:9px;
+              padding:9px 14px;font-weight:700;font-size:13px;cursor:pointer">Install</button>
+      <button id="mc-install-no" aria-label="Dismiss" style="flex:0 0 auto;background:transparent;color:#9aa4b2;
+              border:0;font-size:18px;line-height:1;cursor:pointer;padding:4px 6px">&times;</button>
+    </div>
+    <script>
+    (function(){
+      // Service worker (force-update: skipWaiting + clients.claim + network-first shell in sw.js)
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/mc/sw.js', { scope: '/mc/' }).then(function(r){
+          if (r.update) r.update();
+          var reloaded = false;
+          navigator.serviceWorker.addEventListener('controllerchange', function(){
+            if (reloaded) return; reloaded = true; location.reload();
+          });
+        }).catch(function(){});
+      }
+      // Capture the install opportunity and POP UP our own banner
+      var deferred = null, banner = document.getElementById('mc-install');
+      window.addEventListener('beforeinstallprompt', function(e){
+        e.preventDefault(); deferred = e;
+        if (!sessionStorage.getItem('mc-install-dismissed')) banner.style.display = 'flex';
+      });
+      document.getElementById('mc-install-yes').addEventListener('click', function(){
+        banner.style.display = 'none';
+        if (deferred) { deferred.prompt(); deferred.userChoice.finally(function(){ deferred = null; }); }
+      });
+      document.getElementById('mc-install-no').addEventListener('click', function(){
+        banner.style.display = 'none'; sessionStorage.setItem('mc-install-dismissed', '1');
+      });
+      window.addEventListener('appinstalled', function(){ banner.style.display = 'none'; });
+    })();
+    </script>
   </body>
 </html>

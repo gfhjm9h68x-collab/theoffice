@@ -39,6 +39,7 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
   ".woff2": "font/woff2",
   ".woff": "font/woff",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
 };
 
 function json(res: ServerResponse, code: number, body: unknown): void {

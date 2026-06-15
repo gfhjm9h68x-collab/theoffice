@@ -1,0 +1,16 @@
+{
+  "name": "The Office — Mission Control",
+  "short_name": "Mission Control",
+  "description": "The Office fleet dashboard — agents, memory, kanban, schedules, usage.",
+  "display": "standalone",
+  "orientation": "portrait",
+  "start_url": "/mc/",
+  "scope": "/mc/",
+  "background_color": "#0b0c0e",
+  "theme_color": "#0b0c0e",
+  "icons": [
+    { "src": "/mc/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/mc/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/mc/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
