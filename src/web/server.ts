@@ -94,13 +94,20 @@ export function startServer(cfg: EngineConfig): () => void {
       const rl = cfg.web.rateLimit || { maxFails: 5, windowMs: 900000, blockMs: 60000, maxBlockMs: 3600000 };
       const nowMs = _now();
 
-      let existing = rlMap.get(ip);
-      if (existing && existing.blockedUntil > nowMs) {
-        res.setHeader("Retry-After", Math.ceil((existing.blockedUntil - nowMs) / 1000).toString());
-        return json(res, 429, { error: "too many attempts" });
-      }
-
-      if (!checkBearer(req.headers.authorization, token)) {
+      // A VALID token is ALWAYS allowed through — the rate limiter only ever blocks requests that
+      // FAIL auth. This is deliberate: the limiter keys on IP, but several browser tabs/devices can
+      // share one IP (incl. behind a proxy), so checking the block before auth would let one stale
+      // tab (old/wrong token, polling) lock out the legitimate session on the same IP. By gating the
+      // block on auth failure, brute-force (no/wrong token) is still throttled while a correct token
+      // can never be collateral-blocked.
+      if (checkBearer(req.headers.authorization, token)) {
+        if (rlMap.has(ip)) rlMap.delete(ip); // success clears any accrued strikes/blocks for this IP
+      } else {
+        let existing = rlMap.get(ip);
+        if (existing && existing.blockedUntil > nowMs) {
+          res.setHeader("Retry-After", Math.ceil((existing.blockedUntil - nowMs) / 1000).toString());
+          return json(res, 429, { error: "too many attempts" });
+        }
         const entry: RLEntry = (!existing || (nowMs - existing.lastFail) > rl.windowMs)
           ? { fails: 0, blockedUntil: 0, lastFail: nowMs, blocks: existing?.blocks ?? 0 }
           : existing;
@@ -115,7 +122,7 @@ export function startServer(cfg: EngineConfig): () => void {
           entry.blockedUntil = nowMs + Math.min(cap, rl.blockMs * Math.pow(2, entry.blocks - 1));
           entry.fails = 0; // strikes consumed; escalation now tracked by `blocks`
         }
-        
+
         if (rlMap.size > 10000) {
           for (const [k, v] of rlMap.entries()) {
             if (v.blockedUntil <= nowMs && (nowMs - v.lastFail) > rl.windowMs) {
@@ -125,10 +132,6 @@ export function startServer(cfg: EngineConfig): () => void {
         }
         rlMap.set(ip, entry);
         return json(res, 401, { error: "unauthorized" });
-      }
-
-      if (existing) {
-        rlMap.delete(ip);
       }
 
       try {
