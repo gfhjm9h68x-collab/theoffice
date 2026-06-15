@@ -56,6 +56,24 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+export let _now = () => Date.now();
+export function _setClock(fn: () => number) { _now = fn; }
+
+interface RLEntry {
+  fails: number;
+  blockedUntil: number;
+  lastFail: number;
+}
+const rlMap = new Map<string, RLEntry>();
+
+function getClientIp(req: IncomingMessage): string {
+  const xff = req.headers["x-forwarded-for"];
+  if (typeof xff === "string") {
+    return xff.split(",")[0].trim();
+  }
+  return req.socket.remoteAddress || "unknown";
+}
+
 export function startServer(cfg: EngineConfig): () => void {
   const token = getOrCreateToken(cfg.paths.dashboardTokenFile);
 
@@ -63,9 +81,34 @@ export function startServer(cfg: EngineConfig): () => void {
     const url = new URL(req.url ?? "/", `http://${cfg.web.host}:${cfg.web.port}`);
     const path = url.pathname;
     if (path.startsWith("/api/")) {
+      const ip = getClientIp(req);
+      const rl = cfg.web.rateLimit || { maxFails: 5, windowMs: 900000, blockMs: 3600000 };
+      const nowMs = _now();
+      
+      let entry = rlMap.get(ip);
+      if (entry && entry.blockedUntil > nowMs) {
+        res.setHeader("Retry-After", Math.ceil((entry.blockedUntil - nowMs) / 1000).toString());
+        return json(res, 429, { error: "too many attempts" });
+      }
+
       if (!checkBearer(req.headers.authorization, token)) {
+        if (!entry || (nowMs - entry.lastFail) > rl.windowMs) {
+          entry = { fails: 0, blockedUntil: 0, lastFail: nowMs };
+        }
+        entry.fails++;
+        entry.lastFail = nowMs;
+        if (entry.fails >= rl.maxFails) {
+          entry.blockedUntil = nowMs + rl.blockMs;
+        }
+        if (rlMap.size > 10000) rlMap.clear(); // memory-leak guard
+        rlMap.set(ip, entry);
         return json(res, 401, { error: "unauthorized" });
       }
+
+      if (entry) {
+        rlMap.delete(ip);
+      }
+
       try {
         return await handleApi(cfg, req, res, path, url);
       } catch (err) {

@@ -80,7 +80,15 @@ export function loadConfig(): EngineConfig {
       vaultKeyFile: join(storeDir, ".vault-key"),
       dashboardTokenFile: join(storeDir, ".dashboard-token"),
     },
-    web: { host: "127.0.0.1", port: 3430 },
+    web: { 
+      host: "127.0.0.1", 
+      port: 3430,
+      rateLimit: {
+        maxFails: 5,
+        windowMs: 15 * 60 * 1000, // 15 mins
+        blockMs: 60 * 60 * 1000, // 1 hour
+      }
+    },
     tmux: { socket: "theoffice" },
     owner: { displayName: "Owner", locale: "en", timezone: "UTC" },
     channel: { provider: "none" },
@@ -97,6 +105,13 @@ export function loadConfig(): EngineConfig {
   if (process.env.OFFICE_MAIN_AGENT) cfg.mainAgentId = process.env.OFFICE_MAIN_AGENT;
   if (process.env.OFFICE_TMUX_SOCKET) cfg.tmux.socket = process.env.OFFICE_TMUX_SOCKET;
   if (process.env.TZ) cfg.owner.timezone = process.env.TZ;
+  
+  if (!cfg.web.rateLimit) {
+    cfg.web.rateLimit = { maxFails: 5, windowMs: 900000, blockMs: 3600000 };
+  }
+  if (process.env.OFFICE_RL_MAX_FAILS) cfg.web.rateLimit.maxFails = Number(process.env.OFFICE_RL_MAX_FAILS);
+  if (process.env.OFFICE_RL_WINDOW_MS) cfg.web.rateLimit.windowMs = Number(process.env.OFFICE_RL_WINDOW_MS);
+  if (process.env.OFFICE_RL_BLOCK_MS) cfg.web.rateLimit.blockMs = Number(process.env.OFFICE_RL_BLOCK_MS);
 
   cached = cfg;
   return cfg;

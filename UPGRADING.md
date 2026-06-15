@@ -5,6 +5,21 @@ dashboard ⟳ Update button), skim the entries newer than your previous version.
 
 ---
 
+## Dashboard Rate Limiting & Nginx (2026-06-15)
+
+The dashboard now enforces brute-force lockout rate limiting (401 errors) based on IP addresses.
+It uses the `X-Forwarded-For` header to determine the real client IP.
+
+**⚠️ KÖTELEZŐ (ACTION REQUIRED) for reverse proxy setups:**
+If you run The Office behind Nginx, you **MUST** ensure the real client IP is forwarded. Add the following line to your Nginx `location` block:
+
+```nginx
+proxy_set_header X-Forwarded-For $remote_addr;
+```
+If you skip this, all requests will be seen as coming from `127.0.0.1`, and one bad actor failing authentication will block *everyone* (including you) from the dashboard.
+
+---
+
 ## Image & PDF attachments (2026-06-11)
 
 Agents can now **receive image/PDF attachments** you send them on Slack (open them

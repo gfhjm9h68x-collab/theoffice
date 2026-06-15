@@ -74,6 +74,11 @@ export interface PathsConfig {
 export interface WebConfig {
   host: string;
   port: number;
+  rateLimit?: {
+    maxFails: number;
+    windowMs: number;
+    blockMs: number;
+  };
 }
 
 export interface TmuxConfig {
