@@ -2,6 +2,7 @@ import type { EngineConfig, AgentDef } from "../types.js";
 import { log } from "../logger.js";
 import { claudeRuntime } from "./claude-runtime.js";
 import { codexRuntime } from "./codex-runtime.js";
+import { geminiRuntime } from "./gemini-runtime.js";
 
 /**
  * Provider-pluggable agent runtime registry.
@@ -93,3 +94,4 @@ export function listRuntimes(): { id: string; label: string; models: readonly st
 // Wire the providers shipped today. New providers register themselves by being imported + added here.
 registerRuntime(claudeRuntime);
 registerRuntime(codexRuntime);
+registerRuntime(geminiRuntime);
