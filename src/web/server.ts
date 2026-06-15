@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
+import { totalmem, freemem, cpus, loadavg, uptime as osUptime } from "node:os";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,6 +37,8 @@ const MIME: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
   ".svg": "image/svg+xml",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
 };
 
 function json(res: ServerResponse, code: number, body: unknown): void {
@@ -56,6 +59,33 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
+export let _now = () => Date.now();
+export function _setClock(fn: () => number) { _now = fn; }
+
+interface RLEntry {
+  fails: number;
+  blockedUntil: number;
+  lastFail: number;
+  blocks: number; // how many times this IP has been blocked — drives escalating backoff
+}
+const rlMap = new Map<string, RLEntry>();
+
+function getClientIp(req: IncomingMessage): string {
+  // Prefer X-Real-IP: reverse proxies (nginx, Nginx Proxy Manager, Caddy) set this to
+  // the real client address and OVERWRITE any client-sent value, so it is trustworthy.
+  // X-Forwarded-For via $proxy_add_x_forwarded_for APPENDS the real IP, so a client can
+  // spoof the first hop — only fall back to it (last entry = real client) when X-Real-IP
+  // is absent.
+  const xri = req.headers["x-real-ip"];
+  if (typeof xri === "string" && xri.trim()) return xri.trim();
+  const xff = req.headers["x-forwarded-for"];
+  if (typeof xff === "string" && xff.trim()) {
+    const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length) return parts[parts.length - 1]!;
+  }
+  return req.socket.remoteAddress || "unknown";
+}
+
 export function startServer(cfg: EngineConfig): () => void {
   const token = getOrCreateToken(cfg.paths.dashboardTokenFile);
 
@@ -63,9 +93,50 @@ export function startServer(cfg: EngineConfig): () => void {
     const url = new URL(req.url ?? "/", `http://${cfg.web.host}:${cfg.web.port}`);
     const path = url.pathname;
     if (path.startsWith("/api/")) {
-      if (!checkBearer(req.headers.authorization, token)) {
+      const ip = getClientIp(req);
+      const rl = cfg.web.rateLimit || { maxFails: 5, windowMs: 900000, blockMs: 60000, maxBlockMs: 3600000 };
+      const nowMs = _now();
+
+      // A VALID token is ALWAYS allowed through — the rate limiter only ever blocks requests that
+      // FAIL auth. This is deliberate: the limiter keys on IP, but several browser tabs/devices can
+      // share one IP (incl. behind a proxy), so checking the block before auth would let one stale
+      // tab (old/wrong token, polling) lock out the legitimate session on the same IP. By gating the
+      // block on auth failure, brute-force (no/wrong token) is still throttled while a correct token
+      // can never be collateral-blocked.
+      if (checkBearer(req.headers.authorization, token)) {
+        if (rlMap.has(ip)) rlMap.delete(ip); // success clears any accrued strikes/blocks for this IP
+      } else {
+        let existing = rlMap.get(ip);
+        if (existing && existing.blockedUntil > nowMs) {
+          res.setHeader("Retry-After", Math.ceil((existing.blockedUntil - nowMs) / 1000).toString());
+          return json(res, 429, { error: "too many attempts" });
+        }
+        const entry: RLEntry = (!existing || (nowMs - existing.lastFail) > rl.windowMs)
+          ? { fails: 0, blockedUntil: 0, lastFail: nowMs, blocks: existing?.blocks ?? 0 }
+          : existing;
+
+        entry.fails++;
+        entry.lastFail = nowMs;
+        if (entry.fails >= rl.maxFails) {
+          // Escalating backoff: a human who fat-fingers the token waits a short base block;
+          // a real (automated) attacker doubles their wait each lockout, up to maxBlockMs.
+          entry.blocks++;
+          const cap = rl.maxBlockMs ?? 3600000;
+          entry.blockedUntil = nowMs + Math.min(cap, rl.blockMs * Math.pow(2, entry.blocks - 1));
+          entry.fails = 0; // strikes consumed; escalation now tracked by `blocks`
+        }
+
+        if (rlMap.size > 10000) {
+          for (const [k, v] of rlMap.entries()) {
+            if (v.blockedUntil <= nowMs && (nowMs - v.lastFail) > rl.windowMs) {
+              rlMap.delete(k);
+            }
+          }
+        }
+        rlMap.set(ip, entry);
         return json(res, 401, { error: "unauthorized" });
       }
+
       try {
         return await handleApi(cfg, req, res, path, url);
       } catch (err) {
@@ -159,6 +230,9 @@ async function handleApi(
       return {
         id: a.id,
         displayName: a.displayName,
+        handle: a.id,
+        role: a.role ?? "",
+        color: a.color ?? null,
         enabled: a.enabled,
         model: a.model ?? "default",
         profile: a.profile ?? "full",
@@ -189,6 +263,22 @@ async function handleApi(
   // GET /api/update/check — list commits this install is behind
   if (path === "/api/update/check" && m === "GET") {
     return json(res, 200, checkUpdates());
+  }
+  // GET /api/host — lightweight host/engine health for the dashboard Update view (uptime, cpu, mem).
+  if (path === "/api/host" && m === "GET") {
+    const cores = cpus().length || 1;
+    const memTotal = totalmem();
+    const memFree = freemem();
+    const cpuPct = Math.max(0, Math.min(100, Math.round((loadavg()[0]! / cores) * 100)));
+    return json(res, 200, {
+      uptimeSec: Math.round(osUptime()),
+      cpuPct,
+      cores,
+      memUsedBytes: memTotal - memFree,
+      memTotalBytes: memTotal,
+      runtime: "Node · container",
+      port: cfg.web.port,
+    });
   }
   // POST /api/update/apply {discard?} — pull + build + restart (engine bounces after the response).
   // A dirty working tree returns {ok:false,dirty:true,files} unless discard:true is sent (auto-stash + pull).
@@ -428,6 +518,7 @@ function parseJson(s: string): JsonBody | null {
 
 function serveStatic(res: ServerResponse, path: string): void {
   let rel = path === "/" ? "/index.html" : path;
+  if (rel.endsWith("/")) rel += "index.html"; // serve dir index (e.g. /mc/ -> /mc/index.html)
   // prevent path traversal
   const safe = normalize(rel).replace(/^(\.\.[/\\])+/, "");
   const file = join(UI_DIR, safe);

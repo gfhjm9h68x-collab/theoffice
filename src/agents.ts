@@ -14,6 +14,8 @@ interface AgentMeta {
   allowFrom?: string[];
   profile?: string;
   runtime?: string;
+  role?: string;
+  color?: string;
 }
 
 interface SlackSecret {
@@ -53,6 +55,8 @@ export function loadAgents(cfg: EngineConfig): AgentDef[] {
         : undefined,
       allowFrom: meta.allowFrom,
       profile: meta.profile,
+      role: meta.role,
+      color: meta.color,
       // normalize against the runtime registry: unknown/unset resolves to the default (safe revert semantics)
       runtime: isKnownRuntime(meta.runtime) ? meta.runtime : DEFAULT_RUNTIME,
     });

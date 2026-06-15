@@ -5,6 +5,28 @@ dashboard ⟳ Update button), skim the entries newer than your previous version.
 
 ---
 
+## Dashboard Rate Limiting & Nginx (2026-06-15)
+
+The dashboard now enforces brute-force lockout rate limiting (401 errors) based on IP addresses.
+To find the real client IP it reads `X-Real-IP` first, then falls back to the last hop of
+`X-Forwarded-For`, then the socket address.
+
+**Reverse proxy setups:**
+Most reverse proxies — including **Nginx Proxy Manager**, plain nginx, and Caddy — set
+`X-Real-IP` to the real client address by default and overwrite any client-sent value, so
+**no extra configuration is needed**: it works out of the box and cannot be spoofed.
+
+If your proxy does *not* send `X-Real-IP`, make sure it forwards the real client IP. For plain
+nginx, add to your `location` block:
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+```
+If the backend can only ever see `127.0.0.1` (no real-IP header at all), one bad actor failing
+authentication would block *everyone* (including you) from the dashboard.
+
+---
+
 ## Image & PDF attachments (2026-06-11)
 
 Agents can now **receive image/PDF attachments** you send them on Slack (open them

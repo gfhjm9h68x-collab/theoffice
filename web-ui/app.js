@@ -5,6 +5,7 @@ let AGENTLIST = [];
 
 async function api(path) {
   const r = await fetch(path, { headers: { authorization: `Bearer ${TOKEN}` } });
+  if (r.status === 429) throw new Error(`too many attempts — blocked. retry after ${r.headers.get("retry-after")}s`);
   if (r.status === 401) throw new Error("unauthorized — check the token");
   return r.json();
 }
@@ -28,6 +29,8 @@ async function post(path, body) {
     headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
     body: JSON.stringify(body || {}),
   });
+  if (r.status === 429) throw new Error(`too many attempts — blocked. retry after ${r.headers.get("retry-after")}s`);
+  if (r.status === 401) throw new Error("unauthorized — check the token");
   return r.json();
 }
 

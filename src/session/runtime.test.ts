@@ -11,10 +11,11 @@ const agent = (runtime?: string): AgentDef => ({
 });
 
 describe("runtime registry", () => {
-  it("ships claude + codex as registered providers", () => {
+  it("ships claude + codex + gemini as registered providers", () => {
     const ids = listRuntimes().map((r) => r.id);
     expect(ids).toContain("claude");
     expect(ids).toContain("codex");
+    expect(ids).toContain("gemini");
   });
 
   it("defaults unset/unknown runtimes to claude (safe revert semantics)", () => {
@@ -32,7 +33,8 @@ describe("runtime registry", () => {
   it("isKnownRuntime gates only registered ids", () => {
     expect(isKnownRuntime("claude")).toBe(true);
     expect(isKnownRuntime("codex")).toBe(true);
-    expect(isKnownRuntime("gemini")).toBe(false);
+    expect(isKnownRuntime("gemini")).toBe(true);
+    expect(isKnownRuntime("nonsense")).toBe(false);
     expect(isKnownRuntime(undefined)).toBe(false);
   });
 

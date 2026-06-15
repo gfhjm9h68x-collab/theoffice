@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Office — Mission Control</title>
+    <!-- self-hosted IBM Plex (no external CDN on a private dashboard) -->
+    <link rel="stylesheet" href="/mc/fonts/fonts.css" />
+    <link rel="stylesheet" href="/mc/style.css" />
+  </head>
+  <body>
+    <!-- toggle between the two dashboards (additive; survives app.js render) -->
+    <a id="ui-switch" href="/" title="Switch to the classic dashboard"
+       style="position:fixed;top:10px;right:12px;z-index:99999;font:600 12px/1 system-ui,sans-serif;
+              text-decoration:none;color:#9aa4b2;background:rgba(127,127,127,.16);
+              border:1px solid rgba(127,127,127,.3);border-radius:7px;padding:6px 10px;">&#8592; Classic</a>
+    <!-- Token gate (shown until a valid token connects) -->
+    <div id="gate">
+      <div class="brand-lg">The Office</div>
+      <span class="ml">Mission Control</span>
+      <input id="token" type="password" placeholder="dashboard token" autocomplete="off" />
+      <button id="save">Connect</button>
+      <div class="err" id="gate-err"></div>
+    </div>
+
+    <!-- App shell (built by app.js) -->
+    <div id="app" class="hidden">
+      <header><div class="hwrap" id="hwrap"></div></header>
+      <main class="page">
+        <div class="strip" id="strip"></div>
+        <nav class="tabs" id="tabs"></nav>
+        <div id="panel"></div>
+      </main>
+    </div>
+
+    <script src="/mc/app.js"></script>
+  </body>
+</html>

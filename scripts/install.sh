@@ -121,6 +121,7 @@ if [ "$BIND_HOST" = "0.0.0.0" ]; then
   warn "LAN MODE: the dashboard will be reachable by ANY device on your network."
   warn "  Data stays protected by the dashboard token, but the page shell loads without it."
   warn "  The token IS the password — keep it private, and don't do this on untrusted/guest WiFi."
+  warn "  If running behind a reverse proxy (like Nginx), you MUST add: proxy_set_header X-Forwarded-For \$remote_addr;"
 fi
 
 # ---- 4. systemd --user units ------------------------------------------------
