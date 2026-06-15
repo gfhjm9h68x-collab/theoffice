@@ -37,7 +37,7 @@ interface PendingMsg {
 function wrap(m: PendingMsg): string {
   // DISPLAY ONLY: show the sender's human name to the recipient. Routing still uses m.from_agent (the id).
   const from = busCfg ? displayNameFor(busCfg, m.from_agent) : m.from_agent;
-  return `[Message from ${from}]: ${m.content}\n\nHandle this and reply on your channel. When finished, mark it done.`;
+  return `[Inter-agent message from ${from} (agent id "${m.from_agent}") — this is another AGENT on the team, NOT your owner]: ${m.content}\n\nIf you need to reply, send it BACK TO THE SENDER over the bus (POST /api/messages with "to":"${m.from_agent}"). Do NOT answer on your owner Slack channel — the owner is not part of this thread and should not receive it. When finished, mark this message done (POST /api/messages/done {"id":${m.id}}). If no reply is needed, just mark it done.`;
 }
 
 /**
