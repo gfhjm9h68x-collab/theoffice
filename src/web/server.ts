@@ -69,7 +69,7 @@ const rlMap = new Map<string, RLEntry>();
 function getClientIp(req: IncomingMessage): string {
   const xff = req.headers["x-forwarded-for"];
   if (typeof xff === "string") {
-    return xff.split(",")[0].trim();
+    return xff.split(",")[0]?.trim() || "unknown";
   }
   return req.socket.remoteAddress || "unknown";
 }
@@ -85,27 +85,35 @@ export function startServer(cfg: EngineConfig): () => void {
       const rl = cfg.web.rateLimit || { maxFails: 5, windowMs: 900000, blockMs: 3600000 };
       const nowMs = _now();
       
-      let entry = rlMap.get(ip);
-      if (entry && entry.blockedUntil > nowMs) {
-        res.setHeader("Retry-After", Math.ceil((entry.blockedUntil - nowMs) / 1000).toString());
+      let existing = rlMap.get(ip);
+      if (existing && existing.blockedUntil > nowMs) {
+        res.setHeader("Retry-After", Math.ceil((existing.blockedUntil - nowMs) / 1000).toString());
         return json(res, 429, { error: "too many attempts" });
       }
 
       if (!checkBearer(req.headers.authorization, token)) {
-        if (!entry || (nowMs - entry.lastFail) > rl.windowMs) {
-          entry = { fails: 0, blockedUntil: 0, lastFail: nowMs };
-        }
+        const entry: RLEntry = (!existing || (nowMs - existing.lastFail) > rl.windowMs)
+          ? { fails: 0, blockedUntil: 0, lastFail: nowMs }
+          : existing;
+        
         entry.fails++;
         entry.lastFail = nowMs;
         if (entry.fails >= rl.maxFails) {
           entry.blockedUntil = nowMs + rl.blockMs;
         }
-        if (rlMap.size > 10000) rlMap.clear(); // memory-leak guard
+        
+        if (rlMap.size > 10000) {
+          for (const [k, v] of rlMap.entries()) {
+            if (v.blockedUntil <= nowMs && (nowMs - v.lastFail) > rl.windowMs) {
+              rlMap.delete(k);
+            }
+          }
+        }
         rlMap.set(ip, entry);
         return json(res, 401, { error: "unauthorized" });
       }
 
-      if (entry) {
+      if (existing) {
         rlMap.delete(ip);
       }
 
