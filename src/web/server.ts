@@ -63,6 +63,7 @@ interface RLEntry {
   fails: number;
   blockedUntil: number;
   lastFail: number;
+  blocks: number; // how many times this IP has been blocked — drives escalating backoff
 }
 const rlMap = new Map<string, RLEntry>();
 
@@ -90,9 +91,9 @@ export function startServer(cfg: EngineConfig): () => void {
     const path = url.pathname;
     if (path.startsWith("/api/")) {
       const ip = getClientIp(req);
-      const rl = cfg.web.rateLimit || { maxFails: 5, windowMs: 900000, blockMs: 3600000 };
+      const rl = cfg.web.rateLimit || { maxFails: 5, windowMs: 900000, blockMs: 60000, maxBlockMs: 3600000 };
       const nowMs = _now();
-      
+
       let existing = rlMap.get(ip);
       if (existing && existing.blockedUntil > nowMs) {
         res.setHeader("Retry-After", Math.ceil((existing.blockedUntil - nowMs) / 1000).toString());
@@ -101,13 +102,18 @@ export function startServer(cfg: EngineConfig): () => void {
 
       if (!checkBearer(req.headers.authorization, token)) {
         const entry: RLEntry = (!existing || (nowMs - existing.lastFail) > rl.windowMs)
-          ? { fails: 0, blockedUntil: 0, lastFail: nowMs }
+          ? { fails: 0, blockedUntil: 0, lastFail: nowMs, blocks: existing?.blocks ?? 0 }
           : existing;
-        
+
         entry.fails++;
         entry.lastFail = nowMs;
         if (entry.fails >= rl.maxFails) {
-          entry.blockedUntil = nowMs + rl.blockMs;
+          // Escalating backoff: a human who fat-fingers the token waits a short base block;
+          // a real (automated) attacker doubles their wait each lockout, up to maxBlockMs.
+          entry.blocks++;
+          const cap = rl.maxBlockMs ?? 3600000;
+          entry.blockedUntil = nowMs + Math.min(cap, rl.blockMs * Math.pow(2, entry.blocks - 1));
+          entry.fails = 0; // strikes consumed; escalation now tracked by `blocks`
         }
         
         if (rlMap.size > 10000) {

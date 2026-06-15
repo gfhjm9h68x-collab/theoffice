@@ -88,4 +88,23 @@ describe("Dashboard Rate Limiting", () => {
     expect((await req("bad", ip)).status).toBe(401);
     expect((await req("bad", ip)).status).toBe(429);
   });
+
+  it("escalates the block duration on repeated lockouts", async () => {
+    const ip = "9.9.9.9";
+    // first lockout cycle -> base block (5000ms => Retry-After 5)
+    await req("bad", ip); await req("bad", ip);
+    expect((await req("bad", ip)).status).toBe(401); // 3rd fail triggers block
+    const first = await req("bad", ip);
+    expect(first.status).toBe(429);
+    expect(first.retryAfter).toBe("5"); // base 5000ms / 1000
+
+    // let the block + window expire (blocks count is preserved across the reset)
+    currentMs += 6000;
+    // second lockout cycle -> doubled block (10000ms => Retry-After 10)
+    await req("bad", ip); await req("bad", ip);
+    expect((await req("bad", ip)).status).toBe(401);
+    const second = await req("bad", ip);
+    expect(second.status).toBe(429);
+    expect(second.retryAfter).toBe("10"); // escalated: 5000 * 2 / 1000
+  });
 });

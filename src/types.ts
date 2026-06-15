@@ -77,7 +77,10 @@ export interface WebConfig {
   rateLimit?: {
     maxFails: number;
     windowMs: number;
+    /** base block duration once maxFails is hit; escalates (doubles) on repeat lockouts up to maxBlockMs */
     blockMs: number;
+    /** ceiling for the escalating block duration (optional; defaults to 1h) */
+    maxBlockMs?: number;
   };
 }
 
