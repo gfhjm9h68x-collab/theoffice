@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readdirSync, unlinkSync } from "node:fs";
+import { readdirSync, unlinkSync, existsSync } from "node:fs";
 import { dirname, basename, join } from "node:path";
 import { REPO_ROOT } from "../config.js";
 import { getDb } from "../db/index.js";
@@ -17,11 +17,13 @@ function git(args: string[]): string {
  * and we want a recoverable point). VACUUM INTO writes a clean, WAL-consistent standalone copy — unlike a
  * raw `cp` which would miss un-checkpointed WAL content. Returns the backup path. Keeps the last N.
  */
-function backupDb(): string {
+export function backupDb(): string {
   const db = getDb();
   const dbPath = db.name; // better-sqlite3 exposes the open file path
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backup = `${dbPath}.bak-${stamp}`;
+  // VACUUM INTO throws if the target exists; guarantee a unique name even for two backups in the same ms.
+  let backup = `${dbPath}.bak-${stamp}`;
+  for (let i = 2; existsSync(backup); i++) backup = `${dbPath}.bak-${stamp}-${i}`;
   db.exec(`VACUUM INTO '${backup.replace(/'/g, "''")}'`);
   pruneBackups(dbPath);
   return backup;
