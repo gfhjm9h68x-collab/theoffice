@@ -5,6 +5,11 @@ import { log } from "../logger.js";
 
 const logger = log("slack-files");
 
+// P1#10: cap attachment downloads so a huge file can't exhaust disk/memory on the box. Slack's own
+// upload ceiling is ~1GB; we only ever want small docs/images an agent can actually read, so 50MB is
+// generous. Enforced from the Content-Length header BEFORE reading the body.
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+
 export interface DownloadedFile {
   name: string;
   path: string;
@@ -37,10 +42,20 @@ export async function downloadFiles(
       try {
         const resp = await fetch(url, { headers: { Authorization: `Bearer ${botToken}` } });
         const ct = resp.headers.get("content-type") || "";
-        // Slack serves text/html (a login page) when the token lacks files:read.
-        if (resp.ok && !ct.includes("text/html")) {
-          writeFileSync(path, Buffer.from(await resp.arrayBuffer()), { mode: 0o600 });
-          ok = true;
+        const len = Number(resp.headers.get("content-length") || 0);
+        // Reject oversize attachments by Content-Length BEFORE reading the body (don't buffer 100s of MB).
+        if (Number.isFinite(len) && len > MAX_FILE_BYTES) {
+          logger.warn({ file: f.name, bytes: len, capMB: MAX_FILE_BYTES / 1024 / 1024 }, "file too large -> skipped");
+        } else if (resp.ok && !ct.includes("text/html")) {
+          // Slack serves text/html (a login page) when the token lacks files:read.
+          const bytes = Buffer.from(await resp.arrayBuffer());
+          // Defensive: honor the cap even when Content-Length was absent/lied.
+          if (bytes.length > MAX_FILE_BYTES) {
+            logger.warn({ file: f.name, bytes: bytes.length, capMB: MAX_FILE_BYTES / 1024 / 1024 }, "file too large (post-read) -> skipped");
+          } else {
+            writeFileSync(path, bytes, { mode: 0o600 });
+            ok = true;
+          }
         } else {
           logger.warn({ file: f.name, status: resp.status, ct }, "file download not ok (missing files:read scope?)");
         }

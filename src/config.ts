@@ -2,6 +2,25 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EngineConfig } from "./types.js";
+import { log } from "./logger.js";
+
+const cfgLog = log("config");
+
+/**
+ * Parse a numeric env override defensively (P1#9). A malformed value (e.g. OFFICE_PORT="three" ->
+ * Number(...) = NaN) would otherwise silently poison config — NaN port, NaN rate-limit window. Instead:
+ * if the value is not a finite number (or not > 0 when `positive`), warn and KEEP the existing default.
+ */
+function numEnv(name: string, fallback: number, positive = true): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || (positive && n <= 0)) {
+    cfgLog.warn({ env: name, raw, keeping: fallback }, "ignoring non-numeric/invalid env override");
+    return fallback;
+  }
+  return n;
+}
 
 /**
  * Layered configuration: PLATFORM defaults (here in code) are overlaid by an
@@ -100,20 +119,21 @@ export function loadConfig(): EngineConfig {
 
   let cfg = deepMerge(platform, product, tenant);
 
-  // Select env overrides (ops convenience; never for secrets).
-  if (process.env.OFFICE_PORT) cfg.web.port = Number(process.env.OFFICE_PORT);
+  // Select env overrides (ops convenience; never for secrets). Numeric ones go through numEnv so a
+  // malformed value warns + keeps the default instead of silently setting NaN.
+  cfg.web.port = numEnv("OFFICE_PORT", cfg.web.port);
   if (process.env.OFFICE_HOST) cfg.web.host = process.env.OFFICE_HOST;
   if (process.env.OFFICE_MAIN_AGENT) cfg.mainAgentId = process.env.OFFICE_MAIN_AGENT;
   if (process.env.OFFICE_TMUX_SOCKET) cfg.tmux.socket = process.env.OFFICE_TMUX_SOCKET;
   if (process.env.TZ) cfg.owner.timezone = process.env.TZ;
-  
+
   if (!cfg.web.rateLimit) {
     cfg.web.rateLimit = { maxFails: 5, windowMs: 900000, blockMs: 60000, maxBlockMs: 3600000 };
   }
-  if (process.env.OFFICE_RL_MAX_FAILS) cfg.web.rateLimit.maxFails = Number(process.env.OFFICE_RL_MAX_FAILS);
-  if (process.env.OFFICE_RL_WINDOW_MS) cfg.web.rateLimit.windowMs = Number(process.env.OFFICE_RL_WINDOW_MS);
-  if (process.env.OFFICE_RL_BLOCK_MS) cfg.web.rateLimit.blockMs = Number(process.env.OFFICE_RL_BLOCK_MS);
-  if (process.env.OFFICE_RL_MAX_BLOCK_MS) cfg.web.rateLimit.maxBlockMs = Number(process.env.OFFICE_RL_MAX_BLOCK_MS);
+  cfg.web.rateLimit.maxFails = numEnv("OFFICE_RL_MAX_FAILS", cfg.web.rateLimit.maxFails ?? 5);
+  cfg.web.rateLimit.windowMs = numEnv("OFFICE_RL_WINDOW_MS", cfg.web.rateLimit.windowMs ?? 900000);
+  cfg.web.rateLimit.blockMs = numEnv("OFFICE_RL_BLOCK_MS", cfg.web.rateLimit.blockMs ?? 60000);
+  cfg.web.rateLimit.maxBlockMs = numEnv("OFFICE_RL_MAX_BLOCK_MS", cfg.web.rateLimit.maxBlockMs ?? 3600000);
 
   cached = cfg;
   return cfg;

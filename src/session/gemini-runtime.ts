@@ -35,6 +35,27 @@ const USAGE_LIMIT_RE =
   /usage limit|rate limit|too many requests|quota|\b429\b|try again later|limit reached|reached your .*limit|resource exhausted/i;
 // `agy --print` waits up to --print-timeout (default 5m). Give the turn generous headroom before we kill it.
 const PRINT_TIMEOUT = "10m";
+// P0#1 watchdog: belt-and-suspenders above agy's own --print-timeout in case the CLI itself wedges and
+// never honors it. Hard-kill the subprocess; the kill routes through the terminal handler as a no-penalty
+// requeue (our kill, not the message's fault). Kept above PRINT_TIMEOUT so agy self-times-out first normally.
+const TURN_TIMEOUT_MS = 13 * 60_000;
+
+export type GeminiOutcome = "delivered" | "backoff" | "failed" | "requeue";
+
+/**
+ * Pure decision for a finished gemini turn — completion is keyed off a clean exit (no structured event).
+ * Factored out so (exit code, usage-cap, attempts) -> outcome is table-testable without spawning.
+ */
+export function decideGeminiOutcome(o: {
+  code: number | null;
+  sawUsageLimit: boolean;
+  attempts: number;
+  maxAttempts?: number;
+}): GeminiOutcome {
+  if (o.code === 0) return "delivered";
+  if (o.sawUsageLimit) return "backoff";
+  return o.attempts >= (o.maxAttempts ?? MAX_DELIVERY_ATTEMPTS) ? "failed" : "requeue";
+}
 
 // agents with an `agy` exec currently running -> skip new delivery for them until it finishes
 const inFlight = new Set<string>();
@@ -92,8 +113,6 @@ export function launchGeminiHolder(cfg: EngineConfig, agent: AgentDef): boolean 
  */
 export function deliverGeminiPrompt(cfg: EngineConfig, agent: AgentDef, item: QueuedItem): void {
   if (inFlight.has(agent.id)) return;
-  inFlight.add(agent.id);
-  markDelivering(item.id);
 
   const env = geminiEnv(cfg, agent);
   if (item.source === "channel" && item.reply_channel) {
@@ -116,45 +135,71 @@ export function deliverGeminiPrompt(cfg: EngineConfig, agent: AgentDef, item: Qu
   const scan = (s: string) => {
     if (USAGE_LIMIT_RE.test(s)) sawUsageLimit = true;
   };
-  // stdin = /dev/null (EOF) so `agy` never blocks waiting for interactive follow-up input (same trap the
-  // codex path hit). stdout carries the printed answer; we only need the exit code for completion.
-  const child = spawn("agy", args, { cwd: agent.dir, env, stdio: ["ignore", "pipe", "pipe"] });
-  child.stdout.on("data", (d: Buffer) => scan(d.toString()));
-  child.stderr.on("data", (d: Buffer) => scan(d.toString()));
 
-  const fail = (why: string, code?: number | null) => {
+  // Spawn-safety (mirrors codex): claim in-flight + charge the attempt ONLY after the subprocess spawned,
+  // so a synchronous spawn() throw never wedges the agent "busy" forever.
+  let child;
+  try {
+    // stdin = /dev/null (EOF) so `agy` never blocks waiting for interactive follow-up input (same trap the
+    // codex path hit). stdout carries the printed answer; we only need the exit code for completion.
+    child = spawn("agy", args, { cwd: agent.dir, env, stdio: ["ignore", "pipe", "pipe"] });
+  } catch (err) {
+    markDelivering(item.id); // charge an attempt so the failure budget bounds a persistent spawn fault
+    const why = `gemini spawn threw: ${String((err as Error).message ?? err)}`;
+    if (item.attempts >= MAX_DELIVERY_ATTEMPTS) markFailed(item.id, why);
+    else requeue(item.id);
+    logger.error({ id: item.id, agent: agent.id, why }, "gemini spawn threw -> requeued (inFlight NOT held)");
+    return;
+  }
+
+  inFlight.add(agent.id);
+  markDelivering(item.id);
+
+  let settled = false; // 'error' is usually FOLLOWED by 'close' — book the terminal outcome exactly once
+  let timedOut = false;
+
+  const watchdog = setTimeout(() => {
+    timedOut = true;
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }, TURN_TIMEOUT_MS);
+
+  const finish = (code: number | null, errMsg?: string) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(watchdog);
     inFlight.delete(agent.id);
-    // Usage cap = transient + not the message's fault: hold for a back-off window and DON'T charge an
-    // attempt, so the cap never marks the message failed. isGeminiBusy() keeps it queued until cooldown ends.
-    if (sawUsageLimit) {
-      cooldownUntil.set(agent.id, Date.now() + USAGE_BACKOFF_MS);
+
+    if (timedOut) {
       requeueNoPenalty(item.id);
-      logger.warn(
-        { id: item.id, agent: agent.id, why, code, backoffMin: USAGE_BACKOFF_MS / 60_000 },
-        "gemini usage cap -> holding (no attempt charged)",
-      );
+      logger.warn({ id: item.id, agent: agent.id, timeoutMin: TURN_TIMEOUT_MS / 60_000 }, "gemini turn watchdog timeout -> killed + requeued (no attempt charged)");
       return;
     }
-    if (item.attempts >= MAX_DELIVERY_ATTEMPTS) {
-      markFailed(item.id, why);
-      logger.warn({ id: item.id, agent: agent.id, why, code }, "gemini delivery failed (max attempts)");
-    } else {
-      requeue(item.id);
-      logger.warn({ id: item.id, agent: agent.id, why, code }, "gemini exec not clean -> requeued");
-    }
-  };
-
-  child.on("close", (code) => {
-    if (code === 0) {
-      inFlight.delete(agent.id);
+    const outcome = decideGeminiOutcome({ code, sawUsageLimit, attempts: item.attempts });
+    if (outcome === "delivered") {
       markDelivered(item.id);
       recordInbound(item.agent_id, item.reply_channel, item.prompt);
       logger.info({ id: item.id, agent: agent.id }, "gemini prompt delivered (clean exit)");
+    } else if (outcome === "backoff") {
+      cooldownUntil.set(agent.id, Date.now() + USAGE_BACKOFF_MS);
+      requeueNoPenalty(item.id);
+      logger.warn({ id: item.id, agent: agent.id, code, backoffMin: USAGE_BACKOFF_MS / 60_000 }, "gemini usage cap -> holding (no attempt charged)");
+    } else if (outcome === "failed") {
+      markFailed(item.id, errMsg ?? `exit ${code}`);
+      logger.warn({ id: item.id, agent: agent.id, code }, "gemini delivery failed (max attempts)");
     } else {
-      fail(`exit ${code}`, code);
+      requeue(item.id);
+      logger.warn({ id: item.id, agent: agent.id, code }, "gemini exec not clean -> requeued");
     }
-  });
-  child.on("error", (err) => fail(`spawn error: ${String((err as Error).message ?? err)}`));
+  };
+
+  child.stdout.on("data", (d: Buffer) => scan(d.toString()));
+  child.stderr.on("data", (d: Buffer) => scan(d.toString()));
+  child.on("close", (code) => finish(code));
+  child.on("error", (err) => finish(null, `spawn error: ${String((err as Error).message ?? err)}`));
 }
 
 export const geminiRuntime: Runtime = {

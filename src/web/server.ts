@@ -48,15 +48,39 @@ function json(res: ServerResponse, code: number, body: unknown): void {
   res.end(s);
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+/**
+ * Read a request body, capped at 1MB. Returns the body string, or null if the body was too large — in
+ * which case a 413 has ALREADY been sent and the caller must bail (do not write another response).
+ * P1#5: the prior version called req.destroy() with no resolve, and on Node 22 destroy emits only 'close'
+ * (not 'end'/'error'), so the promise hung forever and leaked the request. The 'close' handler + the latch
+ * guarantee the promise always settles exactly once.
+ */
+function readBody(req: IncomingMessage, res: ServerResponse): Promise<string | null> {
   return new Promise((resolve) => {
     let data = "";
+    let done = false;
+    const finish = (v: string | null) => {
+      if (!done) {
+        done = true;
+        resolve(v);
+      }
+    };
     req.on("data", (c) => {
       data += c;
-      if (data.length > 1_000_000) req.destroy();
+      if (data.length > 1_000_000) {
+        try {
+          res.writeHead(413);
+          res.end();
+        } catch {
+          /* headers already sent — best effort */
+        }
+        req.destroy();
+        finish(null);
+      }
     });
-    req.on("end", () => resolve(data));
-    req.on("error", () => resolve(""));
+    req.on("end", () => finish(data));
+    req.on("close", () => finish(data)); // Node 22 destroy() -> 'close' only; backstop so we never hang
+    req.on("error", () => finish(null));
   });
 }
 
@@ -284,7 +308,8 @@ async function handleApi(
   // POST /api/update/apply {discard?} — pull + build + restart (engine bounces after the response).
   // A dirty working tree returns {ok:false,dirty:true,files} unless discard:true is sent (auto-stash + pull).
   if (path === "/api/update/apply" && m === "POST") {
-    const b = parseJson(await readBody(req)) ?? {};
+    const raw = await readBody(req, res); if (raw === null) return;
+    const b = parseJson(raw) ?? {};
     try {
       return json(res, 200, applyUpdate({ discardLocal: b.discard === true }));
     } catch (e) {
@@ -303,7 +328,8 @@ async function handleApi(
   }
   // POST /api/daily-log (alias /api/daily-logs) — live write path; replaces raw-sqlite daily-log writes
   if ((path === "/api/daily-log" || path === "/api/daily-logs") && m === "POST") {
-    const b = parseJson(await readBody(req));
+    const raw = await readBody(req, res); if (raw === null) return;
+    const b = parseJson(raw);
     if (!b?.agentId || !b?.content) return json(res, 400, { error: "agentId and content required" });
     const date = b.date ?? new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Budapest" });
     const r = db.prepare(`INSERT INTO daily_logs (agent_id, date, content) VALUES (?, ?, ?)`).run(b.agentId, date, b.content);
@@ -321,7 +347,8 @@ async function handleApi(
     return json(res, 200, rows);
   }
   if (path === "/api/memories" && m === "POST") {
-    const b = parseJson(await readBody(req));
+    const raw = await readBody(req, res); if (raw === null) return;
+    const b = parseJson(raw);
     if (!b?.agentId || !b?.content) return json(res, 400, { error: "agentId and content required" });
     const id = saveMemory({ agentId: b.agentId, content: b.content, category: b.category, keywords: b.keywords });
     return json(res, 200, { id });
@@ -337,7 +364,8 @@ async function handleApi(
   }
   // POST /api/kanban — create a card (live write path; replaces raw-sqlite card creation)
   if (path === "/api/kanban" && m === "POST") {
-    const b = parseJson(await readBody(req));
+    const raw = await readBody(req, res); if (raw === null) return;
+    const b = parseJson(raw);
     if (!b?.title) return json(res, 400, { error: "title required" });
     if (b.status && !["planned", "in_progress", "waiting", "done"].includes(b.status)) return json(res, 400, { error: "bad status" });
     if (b.priority && !["low", "normal", "high", "urgent"].includes(b.priority)) return json(res, 400, { error: "bad priority" });
@@ -370,14 +398,16 @@ async function handleApi(
     return json(res, 200, rows);
   }
   if (path === "/api/messages" && m === "POST") {
-    const b = parseJson(await readBody(req));
+    const raw = await readBody(req, res); if (raw === null) return;
+    const b = parseJson(raw);
     if (!b?.from || !b?.to || !b?.content) return json(res, 400, { error: "from, to, content required" });
     const id = sendAgentMessage(b.from, b.to, b.content);
     return json(res, 200, { id });
   }
   // POST /api/messages/done {id} — target agent closes a delivered message
   if (path === "/api/messages/done" && m === "POST") {
-    const b = parseJson(await readBody(req));
+    const raw = await readBody(req, res); if (raw === null) return;
+    const b = parseJson(raw);
     if (!b?.id) return json(res, 400, { error: "id required" });
     const info = db.prepare(`UPDATE agent_messages SET status='done', result=?, completed_at=unixepoch() WHERE id=?`).run(b.result ?? null, b.id);
     if (info.changes === 0) return json(res, 404, { error: "message not found", id: b.id });
@@ -386,7 +416,8 @@ async function handleApi(
 
   // POST /api/outbound {agent, channel, text} — agent reply path (-> outbound_queue -> Slack)
   if (path === "/api/outbound" && m === "POST") {
-    const b = parseJson(await readBody(req));
+    const raw = await readBody(req, res); if (raw === null) return;
+    const b = parseJson(raw);
     if (!b?.agent || !b?.channel || !b?.text) return json(res, 400, { error: "agent, channel, text required" });
     const id = enqueueOutbound(b.agent, b.channel, b.text);
     return json(res, 200, { id });
@@ -428,7 +459,8 @@ async function handleApi(
     // model / enabled edit agent.json then take effect
     const metaPath = join(agent.dir, "agent.json");
     const meta = existsSync(metaPath) ? (parseJson(readFileSync(metaPath, "utf8")) ?? {}) : {};
-    const body = parseJson(await readBody(req)) ?? {};
+    const raw = await readBody(req, res); if (raw === null) return;
+    const body = parseJson(raw) ?? {};
     if (action === "model") {
       const mv = typeof body.model === "string" ? body.model : "default";
       if (mv && mv !== "default") meta.model = mv;
@@ -474,7 +506,8 @@ async function handleApi(
   // --- kanban move : /api/kanban/<id>/status {status} ---
   const km = path.match(/^\/api\/kanban\/([^/]+)\/status$/);
   if (km && m === "POST") {
-    const body = parseJson(await readBody(req)) ?? {};
+    const raw = await readBody(req, res); if (raw === null) return;
+    const body = parseJson(raw) ?? {};
     const st = body.status;
     if (!["planned", "in_progress", "waiting", "done"].includes(st)) return json(res, 400, { error: "bad status" });
     const id = decodeURIComponent(km[1]!);
@@ -495,7 +528,8 @@ async function handleApi(
   // --- memory category update : /api/memories/<id>/category {category} — live hot->cold reclass path ---
   const mc = path.match(/^\/api\/memories\/([^/]+)\/category$/);
   if (mc && m === "POST") {
-    const b = parseJson(await readBody(req)) ?? {};
+    const raw = await readBody(req, res); if (raw === null) return;
+    const b = parseJson(raw) ?? {};
     if (!["hot", "warm", "cold", "shared"].includes(b.category)) return json(res, 400, { error: "bad category" });
     const id = decodeURIComponent(mc[1]!);
     const info = db.prepare(`UPDATE memories SET category=? WHERE id=?`).run(b.category, id);

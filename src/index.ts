@@ -6,6 +6,7 @@ import { startSlackSender } from "./channel/slack-send.js";
 import { startScheduler } from "./scheduler/index.js";
 import { startBus } from "./bus/index.js";
 import { startServer } from "./web/server.js";
+import { reapStaleDelivering } from "./queue/index.js";
 import { log } from "./logger.js";
 
 const logger = log("boot");
@@ -20,6 +21,12 @@ async function main(): Promise<void> {
   openDb(cfg.paths.dbFile);
 
   const stops: Array<() => void> = [];
+
+  // P0#2: recover any 'delivering' rows orphaned by the previous process death BEFORE the deliverer
+  // starts. At this point nothing else writes the queue, so the reset is race-free; without it those
+  // rows are lost-on-restart (stuck in 'delivering' forever).
+  const reaped = reapStaleDelivering();
+  if (reaped > 0) logger.warn({ reaped }, "boot reaper: requeued stale 'delivering' rows from prior run");
 
   // Phase 2: the single inbound-queue deliverer (only writer to a tmux pane).
   stops.push(startDeliverer(cfg));

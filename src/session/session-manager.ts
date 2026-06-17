@@ -48,9 +48,14 @@ export function launchEnabledAgents(cfg: EngineConfig): void {
 export function startDeliverer(cfg: EngineConfig): () => void {
   const socket = cfg.tmux.socket;
   let stopped = false;
+  let running = false; // reentrancy guard: a tick can outlast DELIVERER_TICK_MS (await rt.deliver)
 
   const tick = async () => {
     if (stopped) return;
+    // P0#4: if the previous tick is still in flight, skip this one. Without this, a slow tick lets the
+    // next interval fire concurrently and the same queued item is read+delivered twice (double-inject).
+    if (running) return;
+    running = true;
     try {
       const byId = new Map(loadAgents(cfg).map((a) => [a.id, a]));
       for (const item of listQueued()) {
@@ -64,6 +69,8 @@ export function startDeliverer(cfg: EngineConfig): () => void {
       }
     } catch (err) {
       logger.error({ err }, "deliverer tick error");
+    } finally {
+      running = false;
     }
   };
 

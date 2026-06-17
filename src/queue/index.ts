@@ -58,6 +58,18 @@ export function markDelivering(id: number): void {
     .run(id);
 }
 
+/**
+ * Boot reaper (P0#2): any row left in 'delivering' when the engine died never got a terminal
+ * markDelivered/markFailed/requeue, so it is orphaned and would sit forever. Reset it to 'queued'
+ * so the (single) deliverer picks it up again. MUST run BEFORE startDeliverer, while nothing else
+ * writes the queue, so it is race-free. Idempotent. Returns how many rows were recovered. The
+ * attempts already charged by the prior markDelivering stand, so the failure budget still bounds it.
+ */
+export function reapStaleDelivering(): number {
+  const r = getDb().prepare(`UPDATE inbound_queue SET status='queued' WHERE status='delivering'`).run();
+  return r.changes;
+}
+
 export function markDelivered(id: number): void {
   getDb()
     .prepare(`UPDATE inbound_queue SET status='delivered', delivered_at=unixepoch() WHERE id=?`)
