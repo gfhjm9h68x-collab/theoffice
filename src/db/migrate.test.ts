@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import Database from "better-sqlite3";
 import type { DB } from "./index.js";
+import { SCHEMA_SQL } from "./schema.js";
 import { runMigrations, assertMigrationsValid, schemaVersion, BASELINE_VERSION, type Migration } from "./migrate.js";
 
 const mem = () => new Database(":memory:") as unknown as DB;
@@ -55,6 +56,40 @@ describe("runMigrations — applying", () => {
     runMigrations(db, migs); // v2 skipped (would re-CREATE + throw if not skipped); only v3 runs
     expect(uv(db)).toBe(3);
     expect(cols(db, "t2")).toContain("label");
+  });
+});
+
+describe("Model A — frozen SCHEMA_SQL + migrations-only (fresh-install trap guard)", () => {
+  // The real future flow: SCHEMA_SQL is frozen at v1 (does NOT contain the new column); the change is
+  // ONLY a v2 migration. A fresh install must run SCHEMA_SQL -> adopt v1 -> apply v2 with NO duplicate column.
+  const futureColumn: Migration[] = [
+    { version: 2, name: "add memories.pinned", sql: `ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;` },
+  ];
+
+  it("a FRESH install applies a v2 ADD COLUMN cleanly (no duplicate-column crash)", () => {
+    const db = mem();
+    db.exec(SCHEMA_SQL); // frozen v1 baseline — memories has NO 'pinned' column
+    expect(cols(db, "memories")).not.toContain("pinned");
+    expect(() => runMigrations(db, futureColumn)).not.toThrow(); // adopt v1 -> run v2; would throw if SCHEMA_SQL also had the col
+    expect(uv(db)).toBe(2);
+    expect(cols(db, "memories")).toContain("pinned"); // column came from the migration
+  });
+
+  it("an EXISTING v1 DB gets the same v2 column via the same path", () => {
+    const db = mem();
+    db.exec(SCHEMA_SQL);
+    db.pragma("user_version = 1"); // already adopted at baseline in a prior boot
+    runMigrations(db, futureColumn);
+    expect(uv(db)).toBe(2);
+    expect(cols(db, "memories")).toContain("pinned");
+  });
+
+  it("guards the trap: if SCHEMA_SQL ALSO had the column, the v2 ALTER would throw duplicate-column", () => {
+    // proves WHY the doc forbids double-adding: simulate SCHEMA_SQL already containing 'pinned'
+    const db = mem();
+    db.exec(SCHEMA_SQL);
+    db.exec(`ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;`); // as if SCHEMA_SQL had it
+    expect(() => runMigrations(db, futureColumn)).toThrow(/duplicate column|migration 2/i);
   });
 });
 

@@ -6,6 +6,11 @@
  *
  * Design note: the legacy empty `scheduled_tasks` table is intentionally dropped —
  * file-based scheduled tasks (tenant/scheduled-tasks/) are the source of truth.
+ *
+ * ⚠️ FROZEN AT THE v1 BASELINE (Model A). Do NOT add columns/tables here for new schema changes — this is
+ * exactly the schema `user_version` 1 represents. ALL post-v1 changes go ONLY in MIGRATIONS (src/db/migrate.ts):
+ * a fresh install runs SCHEMA_SQL(v1) then the migrations, so a change made in BOTH would double-apply and
+ * crash the fresh install on a duplicate column. Frozen baseline + migrations-only keeps fresh == existing.
  */
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS memories (

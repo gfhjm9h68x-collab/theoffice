@@ -28,9 +28,25 @@ LIVE tenant DB during one-click Update, so this must be safe + recoverable.
      - **ordered:** sorted by `version`; gaps/dupes are a hard error (caught at load, not at run).
 
 `MIGRATIONS` ships **empty** in this PR (no schema change is being made now — we are installing the
-mechanism). `BASELINE_VERSION = 1`, `SCHEMA_VERSION = 1`. The first real future change adds
-`{ version: 2, name, sql }` and bumps `SCHEMA_VERSION` to 2; existing v1 DBs then run migration 2, fresh DBs
-get it via SCHEMA_SQL and are adopted straight to 2.
+mechanism). `BASELINE_VERSION = 1`.
+
+### Model A — SCHEMA_SQL is FROZEN at v1; post-v1 changes are migrations-ONLY
+`SCHEMA_SQL` represents exactly the schema `user_version` 1 produces and is **never edited again** for new
+changes. Every future change — new **column** or new **table** — goes ONLY into `MIGRATIONS` as
+`{ version, name, sql }` (version strictly ascending from 2). **Do NOT also add it to SCHEMA_SQL.**
+
+Why (the trap this avoids): the runner adopts a fresh/pre-system DB at `BASELINE_VERSION` (=1), NOT at the
+latest version, then runs all pending migrations. So a fresh install always takes the path
+`SCHEMA_SQL(v1) → adopt v1 → run v2, v3, …`. If a column were added to BOTH SCHEMA_SQL and a v2 migration,
+the fresh install would create the column in SCHEMA_SQL and then the v2 `ALTER TABLE ADD COLUMN` would hit
+**duplicate column** → the migration tx throws → `openDb` throws → the fresh install crash-loops. Freezing
+SCHEMA_SQL makes fresh and existing DBs take the identical path (adopt v1, then v2+), so the column is only
+ever added once — by the migration.
+
+Example future change (add a column): add ONLY
+`{ version: 2, name: "add memories.pinned", sql: "ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0" }`
+to `MIGRATIONS`. Fresh install: adopt v1 → run v2 (column added). Existing v1 DB: run v2 (column added).
+New table: same, with a plain `CREATE TABLE` (not `IF NOT EXISTS`, so a real name collision is loud).
 
 ### Why per-migration transactions (not one big one)
 SQLite DDL is transactional. Per-migration tx gives precise rollback + resumability: if v3 throws, v2 stays
@@ -55,5 +71,7 @@ in the update output. Restore = stop engine, `cp` the .bak over theoffice.db, st
 ## Tests (on the branch, must be green)
 - migrate: fresh DB (user_version 0 → BASELINE), idempotent re-run is a no-op, ordering applied ascending,
   a throwing migration rolls back (DDL reverted + user_version unchanged), user_version IS bumped inside a tx.
-- A real ALTER fixture migration (v2 ADD COLUMN) proves an existing v1 DB gets the column and a fresh DB
-  already has it — exercised in the test list, not shipped in MIGRATIONS.
+- A fresh-install fixture (Model A): run the REAL frozen SCHEMA_SQL (no new column) then a v2 ADD COLUMN
+  migration — proves the fresh install applies v2 cleanly with NO duplicate-column error and ends with the
+  column present (the column comes from the migration, NOT SCHEMA_SQL). Plus an existing-v1 DB gets the
+  same column via the same v2. Fixture only — not shipped in MIGRATIONS.

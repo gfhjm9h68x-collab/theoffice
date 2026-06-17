@@ -21,9 +21,15 @@ export const BASELINE_VERSION = 1;
 
 /**
  * Ordered, forward-only migrations applied AFTER SCHEMA_SQL. EMPTY today — this PR installs the mechanism;
- * no schema change is being made. A future change that "CREATE ... IF NOT EXISTS" can't express (e.g. an
- * ALTER TABLE ADD COLUMN on an existing table) is added here as { version, name, sql } with version
- * strictly ascending from 2, AND the column also added to SCHEMA_SQL so fresh installs get it directly.
+ * no schema change is being made.
+ *
+ * IMPORTANT (Model A): SCHEMA_SQL is FROZEN at the v1 baseline. EVERY post-v1 change — new columns AND new
+ * tables — goes ONLY here as { version, name, sql } (version strictly ascending from 2). Do NOT also edit
+ * SCHEMA_SQL: on a fresh install SCHEMA_SQL(v1) -> adopt v1 -> these migrations run, so a column added in
+ * BOTH places would hit "duplicate column" when the migration re-adds what SCHEMA_SQL already created and
+ * crash the fresh install. Frozen baseline + migrations-only = a fresh DB and an existing DB take the exact
+ * same path (adopt v1, then run v2+). New tables use plain CREATE TABLE in a migration (not IF NOT EXISTS,
+ * so a genuine collision is loud).
  */
 export const MIGRATIONS: Migration[] = [];
 
