@@ -1,7 +1,7 @@
 {
   "name": "theoffice",
   "version": "0.1.0",
-  "description": "The Office — a clean, multi-tenant AI agent back-office engine (tmux flat-rate runtime, Slack channel)",
+  "description": "The Office \u2014 a clean, multi-tenant AI agent back-office engine (tmux flat-rate runtime, Slack channel)",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -14,7 +14,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "import:office": "tsx src/migrate-import/import-claudeclaw.ts"
+    "import:office": "tsx src/migrate-import/import-claudeclaw.ts",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@slack/socket-mode": "^2.0.2",
@@ -25,10 +28,14 @@
     "pino-pretty": "^13.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.0",
+    "eslint": "^10.5.0",
+    "prettier": "^3.8.4",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
+    "typescript-eslint": "^8.61.1",
     "vitest": "^2.1.0"
   }
 }
