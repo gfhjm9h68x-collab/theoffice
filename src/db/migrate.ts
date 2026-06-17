@@ -31,7 +31,15 @@ export const BASELINE_VERSION = 1;
  * same path (adopt v1, then run v2+). New tables use plain CREATE TABLE in a migration (not IF NOT EXISTS,
  * so a genuine collision is loud).
  */
-export const MIGRATIONS: Migration[] = [];
+export const MIGRATIONS: Migration[] = [
+  {
+    version: 2,
+    name: "scheduler_state",
+    // Persisted scheduler bookkeeping (k/v). Holds 'last_tick' so boot catch-up knows the window of
+    // occurrences missed while the engine was down. New table -> migration-only (NOT in SCHEMA_SQL, Model A).
+    sql: `CREATE TABLE scheduler_state (k TEXT PRIMARY KEY, v INTEGER NOT NULL);`,
+  },
+];
 
 /** Highest known schema version (the baseline, or the max migration version). */
 export function schemaVersion(migrations: Migration[] = MIGRATIONS): number {
@@ -79,7 +87,7 @@ export function runMigrations(db: DB, migrations: Migration[] = MIGRATIONS): num
       apply();
     } catch (err) {
       logger.error({ version: m.version, name: m.name, err }, "migration failed -> rolled back (DB unchanged, user_version not advanced)");
-      throw new Error(`db migration ${m.version} (${m.name}) failed: ${String((err as Error).message ?? err)}`);
+      throw new Error(`db migration ${m.version} (${m.name}) failed: ${String((err as Error).message ?? err)}`, { cause: err });
     }
     current = m.version;
     logger.warn({ version: m.version, name: m.name }, "applied db migration");

@@ -25,3 +25,22 @@ export function isDueNow(expr: string, nowMs: number, tz: string): boolean {
 export function minuteKey(nowMs: number): number {
   return Math.floor(nowMs / 60000);
 }
+
+/**
+ * The most recent scheduled occurrence STRICTLY BEFORE the minute containing `beforeMs`, returned as the
+ * ms epoch of that occurrence's minute — or null if none / a bad expression. Used by boot catch-up to find
+ * the latest occurrence that fell while the engine was asleep, without minute-by-minute scanning. IANA tz.
+ */
+export function lastOccurrenceBefore(expr: string, beforeMs: number, tz: string): number | null {
+  const beforeMin = Math.floor(beforeMs / 60000);
+  try {
+    const it = parser.parseExpression(expr, { currentDate: new Date(beforeMs), tz });
+    let prevMin = Math.floor(it.prev().toDate().getTime() / 60000);
+    // prev() at an exact minute boundary can return the boundary minute itself (inclusive); step once more
+    // so the result is STRICTLY before the current minute.
+    if (prevMin >= beforeMin) prevMin = Math.floor(it.prev().toDate().getTime() / 60000);
+    return prevMin < beforeMin ? prevMin * 60000 : null;
+  } catch {
+    return null;
+  }
+}
