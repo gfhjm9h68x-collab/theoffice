@@ -1,11 +1,47 @@
 import { execFileSync } from "node:child_process";
+import { readdirSync, unlinkSync } from "node:fs";
+import { dirname, basename, join } from "node:path";
 import { REPO_ROOT } from "../config.js";
+import { getDb } from "../db/index.js";
 import { log } from "../logger.js";
 
 const logger = log("update");
+const BACKUPS_TO_KEEP = 5;
 
 function git(args: string[]): string {
   return execFileSync("git", ["-C", REPO_ROOT, ...args], { encoding: "utf8" });
+}
+
+/**
+ * Snapshot the LIVE tenant DB before an update runs (a schema migration during the update could corrupt it
+ * and we want a recoverable point). VACUUM INTO writes a clean, WAL-consistent standalone copy — unlike a
+ * raw `cp` which would miss un-checkpointed WAL content. Returns the backup path. Keeps the last N.
+ */
+function backupDb(): string {
+  const db = getDb();
+  const dbPath = db.name; // better-sqlite3 exposes the open file path
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backup = `${dbPath}.bak-${stamp}`;
+  db.exec(`VACUUM INTO '${backup.replace(/'/g, "''")}'`);
+  pruneBackups(dbPath);
+  return backup;
+}
+
+function pruneBackups(dbPath: string): void {
+  try {
+    const dir = dirname(dbPath);
+    const prefix = `${basename(dbPath)}.bak-`;
+    const baks = readdirSync(dir).filter((f) => f.startsWith(prefix)).sort(); // ISO stamps sort oldest-first
+    for (const f of baks.slice(0, Math.max(0, baks.length - BACKUPS_TO_KEEP))) {
+      try {
+        unlinkSync(join(dir, f));
+      } catch {
+        /* best-effort prune */
+      }
+    }
+  } catch {
+    /* best-effort */
+  }
 }
 
 export interface PendingCommit {
@@ -87,10 +123,47 @@ export function applyUpdate(opts?: { discardLocal?: boolean }): {
     step("git", ["stash", "push", "-m", "office-update: auto-stash before pull"]);
   }
 
-  step("git", ["pull", "--ff-only", "origin", "main"]);
-  step("npm", ["install", "--no-audit", "--no-fund"]);
-  step("npm", ["run", "build"]);
-  // restart shortly after we've returned the response
+  // Rollback point: capture HEAD BEFORE pulling so a failed build/install can hard-reset main instead of
+  // leaving a half-updated tree (mirrors the manual deploy discipline).
+  const preHead = git(["rev-parse", "HEAD"]).trim();
+  out.push(`pre-update HEAD ${preHead}`);
+
+  // Pre-update DB backup. Refuse the update if it fails — we will not run a (possibly schema-changing)
+  // update on the live DB without a recoverable snapshot.
+  let backupPath: string;
+  try {
+    backupPath = backupDb();
+    out.push(`DB backup -> ${backupPath}`);
+  } catch (e) {
+    return {
+      ok: false,
+      output: `Update aborted — pre-update DB backup failed; refusing to run on the live DB without a recoverable snapshot.\n${String((e as Error).message ?? e)}`,
+    };
+  }
+
+  const home = process.env.HOME ?? "";
+  try {
+    step("git", ["pull", "--ff-only", "origin", "main"]);
+    step("npm", ["ci", "--no-audit", "--no-fund"]); // ci (not install): reproducible from the lockfile
+    step("npm", ["run", "build"]);
+    // The office-say helper lives on PATH (~/.local/bin); recopy it post-build so a changed version ships
+    // with the update instead of going stale.
+    step("install", ["-m", "0755", join(REPO_ROOT, "scripts", "office-say.sh"), join(home, ".local", "bin", "office-say")]);
+  } catch {
+    // Any step failed (step() already pushed the FAILED detail to `out`). Roll the tree back to preHead so
+    // main is never left half-updated; the DB backup stays for manual restore if needed.
+    out.push(`!! update step failed -> rolling back working tree to ${preHead}`);
+    try {
+      git(["reset", "--hard", preHead]);
+      out.push(`rolled back to ${preHead}`);
+    } catch (re) {
+      out.push("ROLLBACK FAILED (manual fix needed): " + String((re as Error).message ?? re));
+    }
+    out.push(`DB backup preserved at ${backupPath} (restore: stop engine, cp it over the db, start engine)`);
+    return { ok: false, output: out.join("\n") };
+  }
+
+  // restart shortly after we've returned the response — ONLY on success
   setTimeout(() => {
     try {
       execFileSync("systemctl", ["--user", "restart", "theoffice.service"]);

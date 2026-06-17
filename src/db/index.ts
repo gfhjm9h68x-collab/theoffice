@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { chmodSync, existsSync, mkdirSync, openSync, closeSync } from "node:fs";
 import { dirname } from "node:path";
 import { SCHEMA_SQL } from "./schema.js";
+import { runMigrations } from "./migrate.js";
 import { log } from "../logger.js";
 
 const logger = log("db");
@@ -36,9 +37,13 @@ export function openDb(dbFile: string): DB {
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
 
+  // SCHEMA_SQL = the full current schema (CREATE ... IF NOT EXISTS): a fresh DB lands fully current here,
+  // an existing DB no-ops. Then the user_version-gated runner applies any forward migrations that
+  // CREATE-IF-NOT-EXISTS can't express (e.g. ALTER ADD COLUMN on a pre-existing table). See db/migrate.ts.
   db.exec(SCHEMA_SQL);
+  const version = runMigrations(db);
 
-  logger.info({ dbFile }, "database ready (WAL)");
+  logger.info({ dbFile, schemaVersion: version }, "database ready (WAL)");
   handle = db;
   return db;
 }
