@@ -27,12 +27,17 @@ function line(r: MemoryRow): string {
  * agent's CLAUDE.md: the engine guarantees a bounded recall even when the agent forgets to ask for it.
  */
 export function recallForPrompt(agentId: string, prompt: string): string {
-  const always = searchMemories({ agentId, limit: MAX_ALWAYS });
+  // Filter the tiers in SQL, not after a category-blind fetch. The old `searchMemories({limit:200})` returned
+  // the 200 most-recent rows of ANY tier, so an agent with >200 newer cold/shared memories pushed its hot+warm
+  // out of the window entirely and they vanished from the preamble. `category IN ('hot','warm')` guarantees the
+  // always-bundle is never crowded out by newer history; the topical fetch likewise asks SQL for cold/shared
+  // only, so FTS hits in hot/warm can't displace the topical matches. (idx_memories_agent_cat covers both.)
+  const always = searchMemories({ agentId, category: ["hot", "warm"], limit: MAX_ALWAYS });
   const hot = always.filter((m) => m.category === "hot");
   const warm = always.filter((m) => m.category === "warm");
-  const topical = (prompt.trim() ? searchMemories({ agentId, q: prompt, limit: MAX_TOPICAL * 3 }) : [])
-    .filter((m) => m.category === "cold" || m.category === "shared")
-    .slice(0, MAX_TOPICAL);
+  const topical = prompt.trim()
+    ? searchMemories({ agentId, q: prompt, category: ["cold", "shared"], limit: MAX_TOPICAL })
+    : [];
 
   // Fill the byte budget in strict priority order; stop at the first entry that would overflow so the
   // most important tiers always win the space (a later, smaller entry never displaces a higher-priority one).

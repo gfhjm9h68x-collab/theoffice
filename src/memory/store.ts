@@ -23,7 +23,8 @@ export function saveMemory(a: SaveMemoryArgs): number {
 export interface SearchArgs {
   agentId?: string;
   q?: string;
-  category?: MemoryTier;
+  /** one tier, or a set of tiers (IN-filtered) — e.g. ['hot','warm'] for the always-bundle */
+  category?: MemoryTier | MemoryTier[];
   limit?: number;
 }
 
@@ -54,8 +55,12 @@ export function searchMemories(a: SearchArgs): MemoryRow[] {
     params.push(a.agentId);
   }
   if (a.category) {
-    where.push("m.category = ?");
-    params.push(a.category);
+    // single tier -> "= ?"; a set -> "IN (?,?,…)". Both hit idx_memories_agent_cat(agent_id, category).
+    const cats = Array.isArray(a.category) ? a.category : [a.category];
+    if (cats.length) {
+      where.push(`m.category IN (${cats.map(() => "?").join(",")})`);
+      params.push(...cats);
+    }
   }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
   params.push(limit);

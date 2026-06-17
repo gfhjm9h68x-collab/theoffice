@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDb, closeDb } from "../db/index.js";
+import { openDb, closeDb, getDb } from "../db/index.js";
 import { saveMemory } from "./store.js";
 import { recallForPrompt } from "./recall.js";
 
@@ -51,5 +51,29 @@ describe("recallForPrompt — bounded session-start preamble", () => {
     expect(out).toContain("active task A");
     expect(out).toContain("owner prefers X");
     expect(out).not.toContain("more memories not shown");
+  });
+
+  it("REGRESSION (#13/#14): a hot memory survives even when >200 NEWER cold/shared memories exist", () => {
+    // The bug: the old always-fetch took the 200 most-recent rows of ANY tier, so newer history evicted
+    // hot/warm entirely. Save one hot, THEN 250 newer cold/shared — the hot must still surface.
+    const hotId = saveMemory({ agentId: "crowd", category: "hot", content: "CRITICAL-hot-active-task" });
+    // make the hot strictly OLDER than the noise (created_at is second-granularity, so pin it explicitly —
+    // otherwise same-second ties make the eviction order undefined and the test loses its teeth).
+    getDb().prepare(`UPDATE memories SET created_at = 1000 WHERE id = ?`).run(hotId);
+    for (let i = 0; i < 250; i++)
+      saveMemory({ agentId: "crowd", category: i % 2 ? "cold" : "shared", content: `noise-${i}` });
+
+    const out = recallForPrompt("crowd", ""); // no prompt -> only the always-bundle (hot+warm)
+    expect(out).toContain("CRITICAL-hot-active-task"); // never crowded out by newer cold/shared
+  });
+
+  it("topical cold/shared matches the prompt and rides alongside the always-bundle", () => {
+    saveMemory({ agentId: "topic", category: "hot", content: "current sprint work" });
+    saveMemory({ agentId: "topic", category: "cold", content: "the pangolin migration runbook from last year" });
+    saveMemory({ agentId: "topic", category: "warm", content: "unrelated stable fact" });
+
+    const out = recallForPrompt("topic", "how did the pangolin migration go");
+    expect(out).toContain("current sprint work"); // always-bundle present
+    expect(out).toContain("pangolin migration runbook"); // cold matched by FTS on the prompt
   });
 });
