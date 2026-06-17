@@ -6,7 +6,7 @@ import type { EngineConfig, AgentDef } from "../types.js";
 import { log } from "../logger.js";
 import { newSession } from "./tmux.js";
 import { writeAgentSettings } from "./profile.js";
-import { markDelivering, markDelivered, markFailed, requeue, requeueNoPenalty } from "../queue/index.js";
+import { markDelivering, markDelivered, markFailed, requeue, requeueNoPenalty, MAX_DELIVERY_ATTEMPTS } from "../queue/index.js";
 import { recordInbound } from "../memory/conversation.js";
 import type { Runtime, QueuedItem } from "./runtime.js";
 
@@ -23,7 +23,6 @@ import type { Runtime, QueuedItem } from "./runtime.js";
  * This whole module is inert until an agent's runtime flag is flipped to "codex" (the gated cutover).
  */
 const logger = log("codex");
-const MAX_DELIVERY_ATTEMPTS = 5;
 // On a ChatGPT usage cap (rolling 5h / weekly window, SHARED with the owner's own ChatGPT/Codex use) we
 // hold delivery rather than burn retries: the cap is transient, so we wait then try again. 15 min is gentle
 // and will succeed once the window rolls. If codex ever surfaces an exact reset time we can honor it here.

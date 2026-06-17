@@ -26,7 +26,8 @@ async function main(): Promise<void> {
   // starts. At this point nothing else writes the queue, so the reset is race-free; without it those
   // rows are lost-on-restart (stuck in 'delivering' forever).
   const reaped = reapStaleDelivering();
-  if (reaped > 0) logger.warn({ reaped }, "boot reaper: requeued stale 'delivering' rows from prior run");
+  if (reaped.requeued > 0 || reaped.failed > 0)
+    logger.warn({ requeued: reaped.requeued, failed: reaped.failed }, "boot reaper: recovered stale 'delivering' rows from prior run");
 
   // Phase 2: the single inbound-queue deliverer (only writer to a tmux pane).
   stops.push(startDeliverer(cfg));

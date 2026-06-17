@@ -12,6 +12,7 @@ import {
   requeueNoPenalty,
   markFailed,
   reapStaleDelivering,
+  MAX_DELIVERY_ATTEMPTS,
   enqueueOutbound,
   listOutboundQueued,
   markOutboundSent,
@@ -78,13 +79,26 @@ describe("boot reaper (P0#2)", () => {
     markDelivering(id); // simulate process death mid-delivery: left in 'delivering', attempts=1
     expect(row(id).status).toBe("delivering");
     const n = reapStaleDelivering();
-    expect(n).toBeGreaterThanOrEqual(1);
+    expect(n.requeued).toBeGreaterThanOrEqual(1);
     expect(row(id)).toEqual({ status: "queued", attempts: 1 }); // recoverable + budget intact
     expect(listQueued("reap").map((i) => i.id)).toContain(id);
   });
 
-  it("is idempotent — a second run with nothing delivering recovers 0", () => {
-    expect(reapStaleDelivering()).toBe(0);
+  it("FAILS an over-budget delivering row instead of requeuing it forever (poison-message guard)", () => {
+    // a message that crashes the ENGINE mid-delivery loops reap->deliver->crash and never reaches a
+    // runtime terminal outcome, so the budget never fails it. The reaper must fail it once attempts are spent.
+    const id = enqueueInbound({ agentId: "poison", source: "manual", prompt: "boom" })!;
+    getDb()
+      .prepare(`UPDATE inbound_queue SET status='delivering', attempts=? WHERE id=?`)
+      .run(MAX_DELIVERY_ATTEMPTS, id);
+    const n = reapStaleDelivering();
+    expect(n.failed).toBeGreaterThanOrEqual(1);
+    expect(row(id).status).toBe("failed"); // failed, NOT requeued
+    expect(listQueued("poison").map((i) => i.id)).not.toContain(id);
+  });
+
+  it("is idempotent — a second run with nothing delivering recovers nothing", () => {
+    expect(reapStaleDelivering()).toEqual({ failed: 0, requeued: 0 });
   });
 });
 

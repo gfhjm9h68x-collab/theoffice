@@ -6,7 +6,7 @@ import type { EngineConfig, AgentDef } from "../types.js";
 import { log } from "../logger.js";
 import { newSession } from "./tmux.js";
 import { writeAgentSettings } from "./profile.js";
-import { markDelivering, markDelivered, markFailed, requeue, requeueNoPenalty } from "../queue/index.js";
+import { markDelivering, markDelivered, markFailed, requeue, requeueNoPenalty, MAX_DELIVERY_ATTEMPTS } from "../queue/index.js";
 import { recordInbound } from "../memory/conversation.js";
 import type { Runtime, QueuedItem } from "./runtime.js";
 
@@ -26,7 +26,6 @@ import type { Runtime, QueuedItem } from "./runtime.js";
  * one-time `agy` sign-in (browser/SSH device-style URL) against their subscription account.
  */
 const logger = log("gemini");
-const MAX_DELIVERY_ATTEMPTS = 5;
 // On a subscription usage cap (Antigravity's rolling window, shared with the owner's own Antigravity use)
 // hold delivery rather than burn retries: the cap is transient, so we wait then try again.
 const USAGE_BACKOFF_MS = 15 * 60_000;

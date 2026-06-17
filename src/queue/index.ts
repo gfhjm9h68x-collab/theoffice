@@ -2,6 +2,12 @@ import { getDb } from "../db/index.js";
 import type { QueueSource } from "../types.js";
 
 /**
+ * Max delivery attempts before an inbound item is failed. Single source of truth — the runtimes import
+ * this for their per-turn budget, and the boot reaper uses it to fail items whose budget is already spent.
+ */
+export const MAX_DELIVERY_ATTEMPTS = 5;
+
+/**
  * The single durable inbound queue. EVERYTHING that becomes a prompt to an agent
  * — channel messages, scheduled tasks, inter-agent messages, manual — lands here,
  * and exactly one consumer (the Session Manager deliverer) drains it. There is no
@@ -58,16 +64,33 @@ export function markDelivering(id: number): void {
     .run(id);
 }
 
+export interface ReapResult {
+  /** over-budget rows failed (poison-message guard) */
+  failed: number;
+  /** rows returned to 'queued' for redelivery */
+  requeued: number;
+}
+
 /**
  * Boot reaper (P0#2): any row left in 'delivering' when the engine died never got a terminal
- * markDelivered/markFailed/requeue, so it is orphaned and would sit forever. Reset it to 'queued'
- * so the (single) deliverer picks it up again. MUST run BEFORE startDeliverer, while nothing else
- * writes the queue, so it is race-free. Idempotent. Returns how many rows were recovered. The
- * attempts already charged by the prior markDelivering stand, so the failure budget still bounds it.
+ * markDelivered/markFailed/requeue, so it is orphaned and would sit forever. MUST run BEFORE
+ * startDeliverer, while nothing else writes the queue, so it is race-free. Idempotent.
+ *
+ * Poison-message guard (Toby): a message that crashes the ENGINE mid-delivery never reaches a runtime's
+ * terminal handler, so decideOutcome never gets to fail it on budget — an unconditional requeue would
+ * loop reap->deliver->markDelivering(attempts++)->crash->reap forever. So FAIL the rows that have already
+ * burned the full budget first, THEN requeue the rest for a normal bounded retry.
  */
-export function reapStaleDelivering(): number {
-  const r = getDb().prepare(`UPDATE inbound_queue SET status='queued' WHERE status='delivering'`).run();
-  return r.changes;
+export function reapStaleDelivering(): ReapResult {
+  const db = getDb();
+  const failed = db
+    .prepare(
+      `UPDATE inbound_queue SET status='failed', last_error='reaped: exceeded max delivery attempts (engine crash mid-delivery)'
+       WHERE status='delivering' AND attempts>=?`
+    )
+    .run(MAX_DELIVERY_ATTEMPTS).changes;
+  const requeued = db.prepare(`UPDATE inbound_queue SET status='queued' WHERE status='delivering'`).run().changes;
+  return { failed, requeued };
 }
 
 export function markDelivered(id: number): void {
