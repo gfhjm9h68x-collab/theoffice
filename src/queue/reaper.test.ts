@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,12 @@ beforeAll(() => {
 afterAll(() => {
   closeDb();
   rmSync(dir, { recursive: true, force: true });
+});
+// Per-test isolation (Toby): the reaper's UPDATE spans the whole table, so a row one test leaves in
+// 'delivering' (e.g. if a guard regressed) would otherwise perturb a sibling's exact-count asserts.
+// Truncating before each test keeps a broken-reaper failure contained to its own case.
+beforeEach(() => {
+  getDb().prepare(`DELETE FROM inbound_queue`).run();
 });
 
 describe("reapStaleDelivering", () => {
