@@ -24,6 +24,11 @@ beforeAll(() => {
     join(tasksDir, "disabled-task", "task-config.json"),
     JSON.stringify({ schedule: "* * * * *", agent: "main", enabled: false, prompt: "should not fire" })
   );
+  mkdirSync(join(tasksDir, "daily-3am"), { recursive: true });
+  writeFileSync(
+    join(tasksDir, "daily-3am", "task-config.json"),
+    JSON.stringify({ schedule: "0 3 * * *", agent: "main", type: "task", prompt: "daily 3am job" })
+  );
   openDb(join(root, "test.db"));
   cfg = {
     mainAgentId: "main",
@@ -96,13 +101,30 @@ describe("catchUpMissed (#16 — fire occurrences missed while the engine was do
     expect(catchUpMissed(cfg, T)).toBe(0); // already handled -> no double-fire
   });
 
-  it("does not catch up an occurrence older than the bounded window (no ancient replay)", () => {
-    const T = Date.parse("2026-06-22T12:00:00Z");
-    setLastTick(T - 30 * 60 * 60 * 1000); // 30h ago — beyond the 6h CATCHUP_MAX
-    // window is bounded to now-6h; an every-minute task's latest occurrence (T-1m) is still inside 6h, so it
-    // DOES fire — but a once-daily task whose last occurrence is >6h ago must NOT. Use the every-minute here
-    // to assert the window is computed from max(lastTick, now-6h): latest missed occurrence is T-1m (recent).
-    const fired = catchUpMissed(cfg, T);
-    expect(fired).toBeLessThanOrEqual(1); // at most the single latest occurrence, never a 30h backlog
+  it("6h CUTOFF: a daily task whose last occurrence is ~11h ago is NOT caught up (proves the bound)", () => {
+    // T = 14:00 Budapest; the daily 03:00 Budapest job last ran 11h ago — beyond the 6h window. Even though
+    // it falls after lastTick (engine was down 30h), it must NOT be caught up. The shipped every-minute test
+    // only asserted <=1; this proves the cutoff specifically against a real daily schedule.
+    const T = Date.parse("2026-06-22T12:00:00Z"); // 14:00 Europe/Budapest
+    setLastTick(T - 30 * 60 * 60 * 1000); // 30h ago, so the daily occurrence IS after lastTick...
+    const before = runsFor("daily-3am");
+    catchUpMissed(cfg, T);
+    expect(runsFor("daily-3am")).toBe(before); // ...but it's >6h old -> bounded out, never fired
+  });
+
+  it("watermark guard (occ <= since): an occurrence at/before the cutoff is skipped, one just after fires", () => {
+    const T = Date.parse("2026-06-25T10:00:00Z");
+    // boundary: latest every-minute occurrence is T-1m. With lastTick = T-1m, since = T-1m, so occ == since -> skip.
+    setLastTick(T - 1 * 60000);
+    let b = runsFor("every-minute");
+    catchUpMissed(cfg, T);
+    expect(runsFor("every-minute")).toBe(b); // occ (T-1m) <= since (T-1m) -> not fired
+
+    // one minute earlier watermark: lastTick = T-2m -> since = T-2m, occ (T-1m) > since -> fires once.
+    getDb().prepare(`DELETE FROM task_runs WHERE name='every-minute' AND ts>=?`).run(Math.floor((T - 5 * 60000) / 1000));
+    setLastTick(T - 2 * 60000);
+    b = runsFor("every-minute");
+    catchUpMissed(cfg, T);
+    expect(runsFor("every-minute")).toBe(b + 1); // occ (T-1m) > since (T-2m) -> fired exactly once
   });
 });
