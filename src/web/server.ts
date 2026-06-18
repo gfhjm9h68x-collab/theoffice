@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { totalmem, freemem, cpus, loadavg, uptime as osUptime } from "node:os";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
@@ -95,18 +95,31 @@ interface RLEntry {
 }
 const rlMap = new Map<string, RLEntry>();
 
-function getClientIp(req: IncomingMessage): string {
-  // Prefer X-Real-IP: reverse proxies (nginx, Nginx Proxy Manager, Caddy) set this to
-  // the real client address and OVERWRITE any client-sent value, so it is trustworthy.
-  // X-Forwarded-For via $proxy_add_x_forwarded_for APPENDS the real IP, so a client can
-  // spoof the first hop — only fall back to it (last entry = real client) when X-Real-IP
-  // is absent.
-  const xri = req.headers["x-real-ip"];
-  if (typeof xri === "string" && xri.trim()) return xri.trim();
-  const xff = req.headers["x-forwarded-for"];
-  if (typeof xff === "string" && xff.trim()) {
-    const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
-    if (parts.length) return parts[parts.length - 1]!;
+/** Constant-time compare of the supplied X-Proxy-Token header against the configured token. */
+function proxyTokenMatches(provided: string | string[] | undefined, expected: string): boolean {
+  if (typeof provided !== "string") return false;
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false; // timingSafeEqual throws on length mismatch; reject first
+  return timingSafeEqual(a, b);
+}
+
+export function getClientIp(req: IncomingMessage, trustedProxyToken?: string): string {
+  // X-Real-IP / X-Forwarded-For are only trustworthy when set by OUR reverse proxy. A client hitting the
+  // port directly can FORGE them to evade the per-IP rate limiter or frame another IP. #6 trusted-proxy gate:
+  // when a token is configured, the proxy sends `X-Proxy-Token`; a request without the matching token has its
+  // forwarding headers IGNORED and falls back to the true peer. No token configured -> unchanged (backward compat).
+  const forwardingTrusted = !trustedProxyToken || proxyTokenMatches(req.headers["x-proxy-token"], trustedProxyToken);
+  if (forwardingTrusted) {
+    // Prefer X-Real-IP: proxies set it to the real client and OVERWRITE any client-sent value. X-Forwarded-For
+    // via $proxy_add_x_forwarded_for APPENDS the real IP (last entry), so use it only when X-Real-IP is absent.
+    const xri = req.headers["x-real-ip"];
+    if (typeof xri === "string" && xri.trim()) return xri.trim();
+    const xff = req.headers["x-forwarded-for"];
+    if (typeof xff === "string" && xff.trim()) {
+      const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+      if (parts.length) return parts[parts.length - 1]!;
+    }
   }
   return req.socket.remoteAddress || "unknown";
 }
@@ -118,7 +131,7 @@ export function startServer(cfg: EngineConfig): () => void {
     const url = new URL(req.url ?? "/", `http://${cfg.web.host}:${cfg.web.port}`);
     const path = url.pathname;
     if (path.startsWith("/api/")) {
-      const ip = getClientIp(req);
+      const ip = getClientIp(req, cfg.web.trustedProxyToken);
       const rl = cfg.web.rateLimit || { maxFails: 5, windowMs: 900000, blockMs: 60000, maxBlockMs: 3600000 };
       const nowMs = _now();
 

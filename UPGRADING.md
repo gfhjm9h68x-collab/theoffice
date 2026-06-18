@@ -5,6 +5,22 @@ dashboard ⟳ Update button), skim the entries newer than your previous version.
 
 ---
 
+## Optional trusted-proxy gate for client-IP (2026-06-18)
+
+The dashboard rate limiter keys on the client IP from `X-Real-IP` / `X-Forwarded-For`. Those are only
+trustworthy when set by YOUR reverse proxy; a client hitting the port directly could forge them to dodge the
+limiter or frame another IP. Opt-in hardening: set a shared token so forwarding headers are only trusted from
+the proxy.
+
+1. Generate a token: `openssl rand -hex 32`
+2. Engine: set env `OFFICE_TRUSTED_PROXY_TOKEN=<token>` (or `web.trustedProxyToken` in tenant overrides).
+3. Proxy (Nginx Proxy Manager / nginx) — add to the location block:
+   ```nginx
+   proxy_set_header X-Proxy-Token <token>;
+   ```
+Requests without the matching token fall back to the real socket peer for rate-limiting. **Unset = unchanged
+behavior (backward compatible)** — existing setups keep working until you opt in.
+
 ## Safer Update flow + DB schema migrations (2026-06-17)
 
 No action required — the one-click **Update** (dashboard ⟳ / `POST /api/update/apply`) is now safer:

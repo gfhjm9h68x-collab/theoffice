@@ -79,6 +79,12 @@ export interface PathsConfig {
 export interface WebConfig {
   host: string;
   port: number;
+  /**
+   * Optional shared secret the reverse proxy sends as `X-Proxy-Token`. When set, X-Real-IP/X-Forwarded-For
+   * are only trusted on requests carrying the matching token (#6 trusted-proxy gate) — stops a direct client
+   * spoofing its rate-limit IP. Unset = forwarding headers trusted as before (backward compatible).
+   */
+  trustedProxyToken?: string;
   rateLimit?: {
     maxFails: number;
     windowMs: number;

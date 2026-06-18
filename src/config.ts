@@ -126,6 +126,7 @@ export function loadConfig(): EngineConfig {
   if (process.env.OFFICE_MAIN_AGENT) cfg.mainAgentId = process.env.OFFICE_MAIN_AGENT;
   if (process.env.OFFICE_TMUX_SOCKET) cfg.tmux.socket = process.env.OFFICE_TMUX_SOCKET;
   if (process.env.TZ) cfg.owner.timezone = process.env.TZ;
+  if (process.env.OFFICE_TRUSTED_PROXY_TOKEN?.trim()) cfg.web.trustedProxyToken = process.env.OFFICE_TRUSTED_PROXY_TOKEN.trim();
 
   if (!cfg.web.rateLimit) {
     cfg.web.rateLimit = { maxFails: 5, windowMs: 900000, blockMs: 60000, maxBlockMs: 3600000 };
