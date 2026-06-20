@@ -1,5 +1,41 @@
 import { describe, it, expect } from "vitest";
-import { parseInbound } from "./slack-ingest.js";
+import { parseInbound, prepareInboundDelivery } from "./slack-ingest.js";
+
+describe("prepareInboundDelivery (non-owner sender identity + routing safety)", () => {
+  // SECURITY: a non-owner allowed contact (e.g. Hanga via allowFrom) must never be mistaken for the owner,
+  // and a reply must always go to the actual sender — never to the owner's DM. (2026-06-20 orchid-cancel bug.)
+  const base = "cancel the orchid watering task";
+  const ownerName = "Szoszo";
+
+  it("non-owner allowed sender: banner NAMES them, warns NOT-owner, reply routes to the SENDER", () => {
+    const { prompt, replyUser } = prepareInboundDelivery({
+      basePrompt: base, senderId: "U_hanga", ownerId: "U_owner", ownerName, senderName: "Hanga",
+    });
+    expect(prompt).toContain("Hanga"); // names them
+    expect(prompt).toContain("NOT your owner");
+    expect(prompt).toContain(ownerName);
+    expect(prompt).toMatch(/owner-only/i); // warns against owner-only authority
+    expect(prompt.endsWith(base)).toBe(true); // original message preserved, after the banner
+    expect(prompt).not.toBe(base);
+    expect(replyUser).toBe("U_hanga"); // reply goes to the sender, NOT the owner
+  });
+
+  it("owner: NO banner, prompt unchanged, reply routes to owner", () => {
+    const { prompt, replyUser } = prepareInboundDelivery({
+      basePrompt: base, senderId: "U_owner", ownerId: "U_owner", ownerName, senderName: ownerName,
+    });
+    expect(prompt).toBe(base); // owner flow unaffected
+    expect(replyUser).toBe("U_owner");
+  });
+
+  it("no owner configured (setup mode): defaults to NON-owner (secure), still routes to sender", () => {
+    const { prompt, replyUser } = prepareInboundDelivery({
+      basePrompt: base, senderId: "U_x", ownerId: undefined, ownerName, senderName: "X",
+    });
+    expect(prompt).toContain("NOT your owner"); // never silently grant owner authority
+    expect(replyUser).toBe("U_x");
+  });
+});
 
 describe("parseInbound", () => {
   const dm = { type: "message", channel_type: "im", channel: "D123", user: "U_owner", text: "hey Charly", ts: "1.1" };
