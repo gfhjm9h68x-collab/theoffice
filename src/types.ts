@@ -59,6 +59,21 @@ export interface EngineConfig {
   tmux: TmuxConfig;
   owner: OwnerConfig;
   channel: ChannelConfig;
+  /**
+   * Optional scoped OCR trigger (deri6 tenant portal). When set, a bot message in `channelId` carrying
+   * the matching `secret` (and a valid UUID) is the ONLY bot message accepted by the Slack ingest — routed
+   * as a data-only re-OCR wake to `agentId`. Unset = the feature is inert and the bot-drop is unchanged.
+   */
+  ocrSignal?: OcrSignalConfig;
+}
+
+export interface OcrSignalConfig {
+  /** the dedicated Slack channel id whose bot posts are treated as OCR triggers */
+  channelId: string;
+  /** shared secret that must be present in the signal payload (matches the poster's secret) */
+  secret: string;
+  /** the agent woken to run the OCR cross-check for the submission */
+  agentId: string;
 }
 
 export interface PathsConfig {

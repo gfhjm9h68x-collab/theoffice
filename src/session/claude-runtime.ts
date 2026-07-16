@@ -11,6 +11,7 @@ import { markDelivering, markDelivered, markFailed, requeue } from "../queue/ind
 import { recordInbound } from "../memory/conversation.js";
 import { recallForPrompt } from "../memory/recall.js";
 import type { Runtime, QueuedItem } from "./runtime.js";
+import { frameForDelivery } from "./delivery.js";
 
 /**
  * Claude runtime — the default provider. Each agent runs a persistent `claude` TUI in tmux that we
@@ -48,11 +49,6 @@ function writeReplyContext(cfg: EngineConfig, agentId: string, channel: string):
   } catch {
     /* best-effort */
   }
-}
-
-/** Tag a channel message so the agent knows it came from the owner via Slack. */
-function wrapForDelivery(source: string, prompt: string): string {
-  return source === "channel" ? `[Slack message from the owner]\n\n${prompt}` : prompt;
 }
 
 /**
@@ -163,7 +159,7 @@ async function deliverClaude(cfg: EngineConfig, agent: AgentDef, item: QueuedIte
   // because the live session still holds the context. `needsPrime` is set by launchClaude only when it
   // actually creates a new session, so this fires on reboot/dashboard-restart but NOT on an engine restart
   // that left the session alive.
-  let text = wrapForDelivery(item.source, item.prompt);
+  let text = frameForDelivery(item);
   const prime = needsPrime.has(item.agent_id);
   if (prime) {
     try {

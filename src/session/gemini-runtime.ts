@@ -9,6 +9,7 @@ import { writeAgentSettings } from "./profile.js";
 import { markDelivering, markDelivered, markFailed, requeue, requeueNoPenalty, MAX_DELIVERY_ATTEMPTS } from "../queue/index.js";
 import { recordInbound } from "../memory/conversation.js";
 import type { Runtime, QueuedItem } from "./runtime.js";
+import { frameForDelivery } from "./delivery.js";
 
 /**
  * Gemini runtime — drives an agent on Google's Antigravity CLI (`agy`), the successor to the Gemini CLI
@@ -122,7 +123,7 @@ export function deliverGeminiPrompt(cfg: EngineConfig, agent: AgentDef, item: Qu
       /* best-effort */
     }
   }
-  const prompt = item.source === "channel" ? `[Slack message from the owner]\n\n${item.prompt}` : item.prompt;
+  const prompt = frameForDelivery(item);
   // Flags BEFORE the prompt value (Go flag parsing stops at the first non-flag arg). Model selection is
   // left to the agent's signed-in default unless agent.model overrides it. Unattended posture mirrors the
   // claude/codex paths: --dangerously-skip-permissions so the agent can office-say / git / write the vault.
