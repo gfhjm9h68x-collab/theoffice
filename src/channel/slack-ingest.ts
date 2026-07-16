@@ -49,6 +49,39 @@ function parseFiles(raw: unknown): SlackFile[] {
   return out;
 }
 
+const OCR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Scoped OCR trigger parser (deri6 tenant portal). This is the ONE narrow exception to the bot-drop:
+ * it accepts ONLY a bot-posted message in the dedicated OCR channel whose JSON payload carries the
+ * correct shared secret, and returns a strictly-validated submission_id. It NEVER returns bot-controlled
+ * free text (only a UUID) and NEVER throws on hostile input. The global bot-drop in parseInbound is
+ * unchanged; this runs before it. Pure + testable.
+ */
+export function parseOcrSignal(
+  event: unknown,
+  sig?: { channelId: string; secret: string }
+): { submissionId: string; channel: string } | null {
+  if (!sig) return null; // feature disabled (cfg.ocrSignal unset)
+  const e = event as Record<string, unknown> | null;
+  if (!e || e.type !== "message") return null;
+  if (e.channel !== sig.channelId) return null; // ONLY the dedicated OCR channel
+  if (!e.bot_id) return null; // the trigger IS a bot (webhook) post
+  let p: unknown;
+  try {
+    p = JSON.parse(typeof e.text === "string" ? e.text : "{}");
+  } catch {
+    return null;
+  }
+  // JSON.parse("null")/true/1/"str"/[...] are valid JSON but not objects — reject, never throw.
+  if (!p || typeof p !== "object" || Array.isArray(p)) return null;
+  const payload = p as Record<string, unknown>;
+  if (typeof payload.signal_secret !== "string" || payload.signal_secret !== sig.secret) return null;
+  const id = typeof payload.submission_id === "string" ? payload.submission_id : "";
+  if (!OCR_UUID_RE.test(id)) return null; // strict UUID; nothing else is trusted
+  return { submissionId: id, channel: e.channel };
+}
+
 /**
  * Pure inbound parser (testable without Slack). Accepts real human messages —
  * DMs or channel posts, including ones that carry file attachments (subtype
@@ -193,6 +226,21 @@ export function startSlackIngest(cfg: EngineConfig): () => void {
         }
       }
       const event = args.event ?? args.body?.event;
+      // Scoped OCR trigger (deri6): the ONLY bot message allowed through, and ONLY as a data-only re-OCR
+      // wake. Runs BEFORE the human path; a fixed template + validated UUID is delivered (never bot text).
+      const ocrSig = parseOcrSignal(event, cfg.ocrSignal);
+      if (ocrSig && cfg.ocrSignal) {
+        enqueueInbound({
+          agentId: cfg.ocrSignal.agentId,
+          source: "channel",
+          prompt: `OCR-SIGNAL: run the deri6 OCR cross-check for submission ${ocrSig.submissionId}`,
+          replyChannel: ocrSig.channel,
+          replyUser: "ocr-signal", // synthetic — no human reply routing
+          dedupKey: `ocr:${ocrSig.submissionId}`, // idempotent: a re-post never double-processes
+        });
+        logger.info({ submissionId: ocrSig.submissionId }, "OCR trigger accepted");
+        return; // do NOT fall through to parseInbound / the human path
+      }
       const parsed = parseInbound(event, agent.slack!.botUserId);
       if (!parsed) return;
       if (!isAllowedSender(parsed.user, agent.allowFrom, ownerId)) {

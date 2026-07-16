@@ -9,6 +9,7 @@ import { writeAgentSettings } from "./profile.js";
 import { markDelivering, markDelivered, markFailed, requeue, requeueNoPenalty, MAX_DELIVERY_ATTEMPTS } from "../queue/index.js";
 import { recordInbound } from "../memory/conversation.js";
 import type { Runtime, QueuedItem } from "./runtime.js";
+import { frameForDelivery } from "./delivery.js";
 
 /**
  * Codex runtime path (Pete-on-Codex pilot). A `runtime: "codex"` agent does NOT run a persistent TUI
@@ -115,7 +116,7 @@ export function deliverCodexPrompt(cfg: EngineConfig, agent: AgentDef, item: Que
       /* best-effort */
     }
   }
-  const prompt = item.source === "channel" ? `[Slack message from the owner]\n\n${item.prompt}` : item.prompt;
+  const prompt = frameForDelivery(item);
   // unattended posture, same spirit as claude's --dangerously-skip-permissions (the box is the boundary):
   // no approval prompts, no sandbox restriction so the agent can office-say / git / write the vault.
   const args = ["exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", prompt];

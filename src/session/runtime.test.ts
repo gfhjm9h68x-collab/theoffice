@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
 import type { AgentDef } from "../types.js";
-import { getRuntime, runtimeFor, isKnownRuntime, listRuntimes, DEFAULT_RUNTIME } from "./runtime.js";
+import {
+  getRuntime,
+  runtimeFor,
+  isKnownRuntime,
+  listRuntimes,
+  DEFAULT_RUNTIME,
+  type QueuedItem,
+} from "./runtime.js";
+import { frameForDelivery } from "./delivery.js";
 
 const agent = (runtime?: string): AgentDef => ({
   id: "x",
@@ -45,5 +53,37 @@ describe("runtime registry", () => {
 
   it("claude readiness is decided live (isBusy always false), not via a tracked flag", () => {
     expect(getRuntime("claude").isBusy("x")).toBe(false);
+  });
+});
+
+describe("frameForDelivery", () => {
+  const item = (over: Partial<QueuedItem>): QueuedItem => ({
+    id: 1,
+    agent_id: "marveen",
+    source: "channel",
+    prompt: "hi",
+    reply_channel: "C123",
+    reply_user: "U0BA6GF2VTJ",
+    attempts: 0,
+    ...over,
+  });
+
+  it("frames a real owner channel message as from the owner", () => {
+    expect(frameForDelivery(item({ prompt: "meds?" }))).toBe("[Slack message from the owner]\n\nmeds?");
+  });
+
+  it("frames a synthetic ocr-signal as a system signal, NOT the owner", () => {
+    const t = frameForDelivery(item({ reply_user: "ocr-signal", prompt: "OCR-SIGNAL: run x" }));
+    expect(t).toBe("[System signal, not from the owner]\n\nOCR-SIGNAL: run x");
+    expect(t).not.toContain("[Slack message from the owner]"); // never mislabeled as owner
+  });
+
+  it("passes non-channel items through unwrapped (bus/scheduler/manual)", () => {
+    expect(frameForDelivery(item({ source: "bus", prompt: "peer msg" }))).toBe("peer msg");
+    expect(frameForDelivery(item({ source: "scheduler", prompt: "heartbeat" }))).toBe("heartbeat");
+  });
+
+  it("owner framing is unaffected by a null reply_user", () => {
+    expect(frameForDelivery(item({ reply_user: null, prompt: "yo" }))).toBe("[Slack message from the owner]\n\nyo");
   });
 });
