@@ -52,7 +52,11 @@ function parseFiles(raw: unknown): SlackFile[] {
 const OCR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The only signal types the deri6 ingest exception recognizes. A validated enum — never free text. */
-export type Deri6SignalType = "ocr" | "bill";
+export type Deri6SignalType = "ocr" | "bill" | "archive";
+
+/** A bizonylat sorszám: exactly YYYY/NNN (digits + one slash). Strict so the value interpolated into
+ *  the archive prompt/fetch-path can never carry anything but digits and a slash — no injection surface. */
+const SORSZAM_RE = /^\d{4}\/\d{3}$/;
 
 /**
  * Scoped deri6 signal parser (tenant portal). This is the ONE narrow exception to the bot-drop:
@@ -70,7 +74,7 @@ export type Deri6SignalType = "ocr" | "bill";
 export function parseDeri6Signal(
   event: unknown,
   sig?: { channelId: string; secret: string }
-): { submissionId: string; channel: string; type: Deri6SignalType } | null {
+): { submissionId: string; channel: string; type: Deri6SignalType; sorszam: string | null } | null {
   if (!sig) return null; // feature disabled (cfg.ocrSignal unset)
   const e = event as Record<string, unknown> | null;
   if (!e || e.type !== "message") return null;
@@ -88,13 +92,22 @@ export function parseDeri6Signal(
   if (typeof payload.signal_secret !== "string" || payload.signal_secret !== sig.secret) return null;
   const id = typeof payload.submission_id === "string" ? payload.submission_id : "";
   if (!OCR_UUID_RE.test(id)) return null; // strict UUID; nothing else is trusted
-  // Strict enum: absent => "ocr" (back-compat); explicit "ocr"/"bill" only; anything else is rejected
-  // (do NOT default-accept a malformed/unknown type — a bad signal is dropped, not coerced).
+  // Strict enum: absent => "ocr" (back-compat); explicit "ocr"/"bill"/"archive" only; anything else is
+  // rejected (do NOT default-accept a malformed/unknown type — a bad signal is dropped, not coerced).
   let type: Deri6SignalType;
   if (payload.type === undefined || payload.type === "ocr") type = "ocr";
   else if (payload.type === "bill") type = "bill";
+  else if (payload.type === "archive") type = "archive";
   else return null;
-  return { submissionId: id, channel: e.channel, type };
+  // archive carries a sorszám to fetch the generated doc. Strictly YYYY/NNN — the only extra field, and
+  // the only value besides the UUID interpolated downstream; anything else drops the signal.
+  let sorszam: string | null = null;
+  if (type === "archive") {
+    const s = typeof payload.sorszam === "string" ? payload.sorszam : "";
+    if (!SORSZAM_RE.test(s)) return null;
+    sorszam = s;
+  }
+  return { submissionId: id, channel: e.channel, type, sorszam };
 }
 
 /**
@@ -246,14 +259,27 @@ export function startSlackIngest(cfg: EngineConfig): () => void {
       // `type` (validated enum) selects one of two fixed templates — nothing else changes.
       const sig = parseDeri6Signal(event, cfg.ocrSignal);
       if (sig && cfg.ocrSignal) {
-        if (sig.type === "bill") {
+        if (sig.type === "archive") {
           enqueueInbound({
             agentId: cfg.ocrSignal.agentId,
             source: "channel",
             prompt:
-              `BILL-SIGNAL: deri6 submission ${sig.submissionId} ready — pull the readings, compute the ` +
-              `itemized SZÁMVITELI BIZONYLAT, present the full amounts to Szoszo in Slack for approval; ` +
-              `do NOT issue/save/draft until he approves.`,
+              `POST-GENERATE: deri6 bizonylat ${sig.sorszam} (submission ${sig.submissionId}) was approved on ` +
+              `the web + generated — fetch it from https://deri6.hu/bizonylat/view/${sig.sorszam!.replace("/", "-")} ` +
+              `with your gen token, then save it to Drive (05 Bizonylatok) and create the Gmail draft to the ` +
+              `tenant. Dedup on submission ${sig.submissionId} — never double-file/draft on a retry.`,
+            replyChannel: sig.channel,
+            replyUser: "archive-signal", // synthetic — no human reply routing
+            dedupKey: `archive:${sig.submissionId}`, // idempotent: a re-post never double-files
+          });
+        } else if (sig.type === "bill") {
+          enqueueInbound({
+            agentId: cfg.ocrSignal.agentId,
+            source: "channel",
+            prompt:
+              `BILL-SIGNAL: new deri6 reading in for submission ${sig.submissionId} — post Szoszo a Slack ` +
+              `heads-up to review + approve the bizonylat at https://deri6.hu/bizonylat. Approval is on the ` +
+              `WEB now; do NOT compute, present, or issue anything.`,
             replyChannel: sig.channel,
             replyUser: "bill-signal", // synthetic — no human reply routing
             dedupKey: `bill:${sig.submissionId}`, // idempotent: a re-post never double-processes

@@ -9,7 +9,7 @@ import type { QueuedItem } from "./runtime.js";
  *   - tenant/agents/darryl/tools/drift-detector/drift_detect.py   (two queries: delivered + undelivered)
  *   - tenant/agents/marveen/hooks/office-say-stop-guard.py        (the latest-owner-inbound query)
  */
-export const SYNTHETIC_SIGNAL_USERS = new Set(["ocr-signal", "bill-signal"]);
+export const SYNTHETIC_SIGNAL_USERS = new Set(["ocr-signal", "bill-signal", "archive-signal"]);
 
 /**
  * Tag a queued item for delivery to the agent. A channel message is normally framed as coming from the

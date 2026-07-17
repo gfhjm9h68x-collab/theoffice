@@ -110,26 +110,39 @@ describe("parseDeri6Signal (scoped bot-message exception — deri6 OCR + bill tr
   });
 
   it("accepts a valid bot signal: absent type defaults to ocr (back-compat)", () => {
-    expect(parseDeri6Signal(signal(), sig)).toEqual({ submissionId: UUID, channel: sig.channelId, type: "ocr" });
+    expect(parseDeri6Signal(signal(), sig)).toEqual({ submissionId: UUID, channel: sig.channelId, type: "ocr", sorszam: null });
   });
 
-  it("honors explicit type: ocr and bill", () => {
-    expect(parseDeri6Signal(signal({}, { type: "ocr" }), sig)).toEqual({ submissionId: UUID, channel: sig.channelId, type: "ocr" });
-    expect(parseDeri6Signal(signal({}, { type: "bill" }), sig)).toEqual({ submissionId: UUID, channel: sig.channelId, type: "bill" });
+  it("honors explicit type: ocr and bill (sorszam null for non-archive)", () => {
+    expect(parseDeri6Signal(signal({}, { type: "ocr" }), sig)).toEqual({ submissionId: UUID, channel: sig.channelId, type: "ocr", sorszam: null });
+    expect(parseDeri6Signal(signal({}, { type: "bill" }), sig)).toEqual({ submissionId: UUID, channel: sig.channelId, type: "bill", sorszam: null });
+  });
+
+  it("archive: needs a strict YYYY/NNN sorszám alongside the UUID", () => {
+    expect(parseDeri6Signal(signal({}, { type: "archive", sorszam: "2026/001" }), sig))
+      .toEqual({ submissionId: UUID, channel: sig.channelId, type: "archive", sorszam: "2026/001" });
+    // missing / malformed / injection-y sorszám → dropped (the only extra value interpolated downstream)
+    for (const bad of [undefined, "2026-001", "2026/1", "2026/001/x", "../../x", "2026/001; rm", 12, { s: 1 }]) {
+      expect(parseDeri6Signal(signal({}, { type: "archive", sorszam: bad }), sig)).toBeNull();
+    }
   });
 
   it("REJECTS an unknown or non-string type (never default-accept a malformed signal)", () => {
     expect(parseDeri6Signal(signal({}, { type: "exec" }), sig)).toBeNull();
     expect(parseDeri6Signal(signal({}, { type: "OCR" }), sig)).toBeNull(); // case-sensitive enum
+    expect(parseDeri6Signal(signal({}, { type: "Archive" }), sig)).toBeNull(); // case-sensitive
     expect(parseDeri6Signal(signal({}, { type: 1 }), sig)).toBeNull();
     expect(parseDeri6Signal(signal({}, { type: null }), sig)).toBeNull();
     expect(parseDeri6Signal(signal({}, { type: { evil: true } }), sig)).toBeNull();
   });
 
-  it("a bill signal still passes EVERY other gate (bad UUID / wrong secret / wrong channel → null)", () => {
+  it("bill AND archive still pass EVERY other gate (bad UUID / wrong secret / wrong channel → null)", () => {
     expect(parseDeri6Signal(signal({}, { type: "bill", submission_id: "nope" }), sig)).toBeNull();
     expect(parseDeri6Signal(signal({}, { type: "bill", signal_secret: "wrong" }), sig)).toBeNull();
     expect(parseDeri6Signal(signal({ channel: "C_other" }, { type: "bill" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({}, { type: "archive", sorszam: "2026/001", submission_id: "nope" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({}, { type: "archive", sorszam: "2026/001", signal_secret: "wrong" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({ channel: "C_other" }, { type: "archive", sorszam: "2026/001" }), sig)).toBeNull();
   });
 
   it("feature disabled (no sig) → null, path inert", () => {
