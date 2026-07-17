@@ -58,6 +58,23 @@ window.agentAction = async (id, action) => {
   await post(`/api/agents/${id}/${action}`, {});
   setTimeout(refreshAgents, 1500);
 };
+window.emergencyRestart = async (btn) => {
+  if (!confirm("EMERGENCY RESTART\n\nSaves the ENTIRE queue + all messages to a backup (nothing lost), clears the queue, restarts every agent, and briefs Michael to summarise it to you on Slack.\n\nUse when the fleet is going crazy / your messages aren't getting through. Proceed?")) return;
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "🚨 Working…"; }
+  try {
+    const r = await post("/api/emergency-restart", {});
+    if (r && r.ok) {
+      alert(`Done ✅\n\n• Saved ${r.saved.inboundPending} queued + ${r.saved.busPending} bus messages (plus failed) to:\n${r.backupDir}\n• Cleared ${r.cleared.inbound} inbound + ${r.cleared.bus} bus\n• Restarted ${r.restarted.length} agents\n• Briefed ${r.briefedAgent || "—"} — he'll message you on Slack shortly.`);
+    } else {
+      alert("Emergency restart FAILED: " + ((r && r.error) || "unknown error") + "\nNothing was deleted if the save step failed.");
+    }
+  } catch (e) {
+    alert("Emergency restart error: " + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+  }
+};
 window.setEnabled = async (id, enabled) => {
   await post(`/api/agents/${id}/enabled`, { enabled });
   setTimeout(refreshAgents, 800);

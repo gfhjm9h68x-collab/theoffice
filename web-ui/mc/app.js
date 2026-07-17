@@ -194,6 +194,11 @@ function renderHeader() {
       <div class="wordmark"><div class="t1">The Office</div><div class="t2">Mission Control</div></div>
     </div>
     <div class="controls">
+      <button id="emergency-btn" onclick="emergencyRestart(this)" title="Save the whole queue, wipe it, restart every agent, and have Michael brief you"
+              style="flex:0 0 auto;background:#dc2626;color:#fff;border:0;border-radius:9px;padding:9px 13px;
+                     font-weight:800;font-size:13px;letter-spacing:.2px;cursor:pointer;box-shadow:0 1px 0 rgba(0,0,0,.25)">
+        🚨 Emergency Restart
+      </button>
       <div class="connpill" id="connpill">
         <span class="dot"></span><b>connected</b>
         <span class="sep"></span><span class="host">${esc(location.host || "local")}</span>
@@ -316,12 +321,14 @@ function agentCard(a) {
       <div class="r"><span class="k">model</span>${modelSel}</div>
     </div>
     <div class="tiles">
+      <div class="tile" style="flex:1"><div class="tl">context</div><div class="tv tnum" style="${a.contextPct != null ? (a.contextPct >= 85 ? "color:#dc2626" : a.contextPct >= 70 ? "color:#d97706" : "color:#16a34a") : "color:#16a34a;font-size:13px"}">${a.contextPct != null ? a.contextPct + "%" : "ok"}</div></div>
       <div class="tile" style="flex:1"><div class="tl">memories</div><div class="tv tnum">${a.memories ?? 0}</div></div>
-      <div class="tile" style="flex:1.3"><div class="tl">tokens 24h</div><div class="tv tnum">${tokens}</div></div>
+      <div class="tile" style="flex:1.2"><div class="tl">tokens 24h</div><div class="tv tnum">${tokens}</div></div>
       <div class="tile" style="flex:1"><div class="tl">profile</div><div class="tv" style="font-size:13px">${a.profile === "full" ? "full" : esc(a.profile)}</div></div>
     </div>
     <div class="acts">
       <button class="primary" onclick="agentAction('${esc(a.id)}','restart')">Restart</button>
+      <button class="ghost" title="Write handoff → restart fresh → re-read it → Slack you a summary" onclick="cleanReset('${esc(a.id)}')">↻ Handoff</button>
       ${canStop ? `<button class="ghost" onclick="agentAction('${esc(a.id)}','stop')">Stop</button>` : `<button class="ghost" onclick="agentAction('${esc(a.id)}','start')">Start</button>`}
       <button class="ghost ${a.enabled ? "danger" : ""}" onclick="setEnabled('${esc(a.id)}', ${!a.enabled})">${a.enabled ? "Disable" : "Enable"}</button>
     </div>
@@ -542,6 +549,30 @@ window.setEnabled = async (id, enabled) => {
   if (!enabled && !confirm(`Disable ${nm(id)}?`)) return;
   await post(`/api/agents/${id}/enabled`, { enabled });
   setTimeout(softRefresh, 800);
+};
+window.cleanReset = async (id) => {
+  if (!confirm(`Handoff + Reset ${nm(id)}?\n\nWrites a handoff doc → restarts with fresh context → re-reads the handoff → Slack-summaries you. Takes a couple minutes.`)) return;
+  const r = await post(`/api/agents/${id}/cleanreset`, {}).catch(() => null);
+  alert(r && r.ok ? `Handoff + Reset started for ${nm(id)}. You'll get the Slack summary in a few minutes.` : `Could not start handoff + reset for ${nm(id)}.`);
+  setTimeout(softRefresh, 1500);
+};
+window.emergencyRestart = async (btn) => {
+  if (!confirm("EMERGENCY RESTART\n\nThis will:\n• save the ENTIRE queue + all messages to a backup (nothing lost)\n• clear the queue\n• restart every agent\n• brief Michael to summarise it to you on Slack\n\nUse this when the fleet is going crazy / your messages aren't getting through. Proceed?")) return;
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "🚨 Working…"; }
+  try {
+    const r = await post("/api/emergency-restart", {});
+    if (r && r.ok) {
+      alert(`Done ✅\n\n• Saved ${r.saved.inboundPending} queued + ${r.saved.busPending} bus messages (plus failed) to:\n${r.backupDir}\n• Cleared ${r.cleared.inbound} inbound + ${r.cleared.bus} bus\n• Restarted ${r.restarted.length} agents\n• Briefed ${r.briefedAgent || "—"} — he'll message you on Slack shortly.`);
+    } else {
+      alert("Emergency restart FAILED: " + ((r && r.error) || "unknown error") + "\nNothing was deleted if the save step failed.");
+    }
+  } catch (e) {
+    alert("Emergency restart error: " + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+    setTimeout(softRefresh, 2000);
+  }
 };
 window.moveCard = async (id, sel) => { await post(`/api/kanban/${encodeURIComponent(id)}/status`, { status: sel.value }); await showTab("kanban"); renderStrip(); renderTabs(); };
 window.doUpdate = async (btn) => {

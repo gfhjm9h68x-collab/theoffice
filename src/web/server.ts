@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { totalmem, freemem, cpus, loadavg, uptime as osUptime } from "node:os";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { totalmem, freemem, cpus, loadavg, uptime as osUptime, homedir } from "node:os";
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
@@ -14,10 +15,59 @@ import { enqueueOutbound } from "../queue/index.js";
 import { saveMemory, searchMemories } from "../memory/store.js";
 import { computeUsage, WINDOW_MS } from "./usage.js";
 import { checkUpdates, applyUpdate } from "./update.js";
+import { runEmergencyRestart } from "./emergency.js";
 import { sessionNameFor, launchAgent } from "../session/session-manager.js";
 import { hasSession, capturePane, killSession } from "../session/tmux.js";
 import { detectPaneState } from "../session/pane-state.js";
 import { isCodexBusy } from "../session/codex-runtime.js";
+
+// Live context fill % from the agent's most-recent Claude Code session transcript — reads the
+// last turn's token usage (input + cache) against the context window. Token-free (no /context
+// call). Window = 1M, matching Claude Code's own /context readout (verified on cfo + marveen).
+// null if unreadable.
+const CONTEXT_WINDOW = 1000000;
+function contextPctFromTranscript(agentDir: string): number | null {
+  try {
+    const dir = join(homedir(), ".claude", "projects", agentDir.replace(/\//g, "-"));
+    if (!existsSync(dir)) return null;
+    let best = "";
+    let bestM = 0;
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".jsonl")) continue;
+      const mm = statSync(join(dir, f)).mtimeMs;
+      if (mm > bestM) {
+        bestM = mm;
+        best = f;
+      }
+    }
+    if (!best) return null;
+    const p = join(dir, best);
+    const size = statSync(p).size;
+    const len = Math.min(size, 262144);
+    const fd = openSync(p, "r");
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, size - len);
+    closeSync(fd);
+    const lines = buf.toString("utf8").split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const ln = lines[i]!.trim();
+      if (!ln) continue;
+      try {
+        const o = JSON.parse(ln);
+        const u = o?.message?.usage ?? o?.usage;
+        if (u && (u.input_tokens || u.cache_read_input_tokens)) {
+          const t = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+          return Math.min(100, Math.round((t / CONTEXT_WINDOW) * 100));
+        }
+      } catch {
+        /* partial / non-JSON line */
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 import { isKnownRuntime, listRuntimes, DEFAULT_RUNTIME } from "../session/runtime.js";
 import { getOrCreateToken, checkBearer } from "./auth.js";
 import { log } from "../logger.js";
@@ -255,6 +305,7 @@ async function handleApi(
       const session = sessionNameFor(a.id);
       const running = hasSession(cfg.tmux.socket, session);
       let state = "offline";
+      let contextPct: number | null = null;
       if (running) {
         if (a.runtime === "codex") {
           // codex agents run an idle tmux HOLDER (not a Claude TUI), so pane-state can't classify them.
@@ -263,6 +314,16 @@ async function handleApi(
         } else {
           const pane = capturePane(cfg.tmux.socket, session);
           state = pane ? detectPaneState(pane) : "unknown";
+          // Primary: precise always-on fill % from the session transcript. Fallback: the footer
+          // gauge (only visible when climbing) if the transcript can't be read.
+          const tp = contextPctFromTranscript(a.dir);
+          if (tp != null) contextPct = tp;
+          else if (pane) {
+            const used = pane.match(/(\d+)%\s*context\s*used/i);
+            const left = pane.match(/(\d+)%\s*context\s*left/i);
+            if (used) contextPct = Number(used[1]);
+            else if (left) contextPct = 100 - Number(left[1]);
+          }
         }
       }
       return {
@@ -280,6 +341,7 @@ async function handleApi(
         slack: a.slack ? { ready: !!(a.slack.appToken && a.slack.botToken), botUserId: a.slack.botUserId ?? null } : null,
         allowFrom: a.allowFrom ?? [],
         memories: counts[a.id] ?? 0,
+        contextPct,
       };
     });
     return json(res, 200, agents);
@@ -327,6 +389,19 @@ async function handleApi(
       return json(res, 200, applyUpdate({ discardLocal: b.discard === true }));
     } catch (e) {
       return json(res, 200, { ok: false, output: String((e as Error).message) });
+    }
+  }
+
+  // POST /api/emergency-restart — save the whole queue, clear it, restart every enabled agent, and brief
+  // the main agent to summarise to the owner. One button for "the fleet is melting down, reset it safely".
+  if (path === "/api/emergency-restart" && m === "POST") {
+    const raw = await readBody(req, res); if (raw === null) return;
+    const b = parseJson(raw) ?? {};
+    try {
+      return json(res, 200, await runEmergencyRestart(cfg, { dryRun: b.dryRun === true }));
+    } catch (e) {
+      logger.error({ err: e }, "emergency-restart failed");
+      return json(res, 500, { ok: false, error: String((e as Error).message) });
     }
   }
 
@@ -444,7 +519,7 @@ async function handleApi(
   }
 
   // --- agent control (write) : /api/agents/<id>/<action> ---
-  const am = path.match(/^\/api\/agents\/([A-Za-z0-9_-]+)\/(model|runtime|enabled|restart|start|stop)$/);
+  const am = path.match(/^\/api\/agents\/([A-Za-z0-9_-]+)\/(model|runtime|enabled|restart|start|stop|cleanreset)$/);
   if (am && m === "POST") {
     const id = am[1]!, action = am[2]!;
     const agent = loadAgents(cfg).find((a) => a.id === id);
@@ -459,6 +534,16 @@ async function handleApi(
       killSession(cfg.tmux.socket, session);
       relaunch();
       return json(res, 200, { ok: true, action });
+    }
+    if (action === "cleanreset") {
+      // Fire-and-forget the handoff+reset+summary orchestrator (background python).
+      // It tells the agent to write HANDOFF.md, waits, restarts it via this same API,
+      // then tells it to re-read the handoff and office-say Szoszo a summary.
+      try {
+        spawn("python3", ["/opt/claude/theoffice/tenant/agents/darryl/tools/clean-reset/clean_reset.py", id],
+          { detached: true, stdio: "ignore" }).unref();
+      } catch { /* best-effort */ }
+      return json(res, 200, { ok: true, action, note: "handoff + reset started; Slack summary in a few minutes" });
     }
     if (action === "start") {
       relaunch();
