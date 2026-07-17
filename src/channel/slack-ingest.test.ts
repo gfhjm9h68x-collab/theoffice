@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseInbound, prepareInboundDelivery, parseOcrSignal } from "./slack-ingest.js";
+import { parseInbound, prepareInboundDelivery, parseDeri6Signal } from "./slack-ingest.js";
 
 describe("prepareInboundDelivery (non-owner sender identity + routing safety)", () => {
   // SECURITY: a non-owner allowed contact (e.g. Hanga via allowFrom) must never be mistaken for the owner,
@@ -93,11 +93,12 @@ describe("parseInbound", () => {
   });
 });
 
-describe("parseOcrSignal (scoped bot-message exception — deri6 OCR trigger)", () => {
+describe("parseDeri6Signal (scoped bot-message exception — deri6 OCR + bill triggers)", () => {
   // SECURITY: the global bot-drop in parseInbound stays intact; this is the ONE narrow exception —
   // a bot post in the dedicated channel carrying the shared secret + a valid UUID, delivered as
   // DATA ONLY (a fixed prompt template, never the bot's free text). Adversarial coverage per Toby's
   // review: wrong channel / not-a-bot / bad-or-missing secret / non-UUID / non-object JSON are all dropped.
+  // The `type` field is a strict enum (ocr|bill, absent=ocr); anything else is rejected.
   const sig = { channelId: "C_ocr", secret: "s3cr3t-signal" };
   const UUID = "0adb4dcd-6677-4a34-a862-251687cd4e39";
   const signal = (over: Record<string, unknown> = {}, payloadOver: Record<string, unknown> = {}) => ({
@@ -108,49 +109,68 @@ describe("parseOcrSignal (scoped bot-message exception — deri6 OCR trigger)", 
     ...over,
   });
 
-  it("accepts a valid bot signal: right channel + secret + UUID → {submissionId, channel}", () => {
-    expect(parseOcrSignal(signal(), sig)).toEqual({ submissionId: UUID, channel: sig.channelId });
+  it("accepts a valid bot signal: absent type defaults to ocr (back-compat)", () => {
+    expect(parseDeri6Signal(signal(), sig)).toEqual({ submissionId: UUID, channel: sig.channelId, type: "ocr" });
+  });
+
+  it("honors explicit type: ocr and bill", () => {
+    expect(parseDeri6Signal(signal({}, { type: "ocr" }), sig)).toEqual({ submissionId: UUID, channel: sig.channelId, type: "ocr" });
+    expect(parseDeri6Signal(signal({}, { type: "bill" }), sig)).toEqual({ submissionId: UUID, channel: sig.channelId, type: "bill" });
+  });
+
+  it("REJECTS an unknown or non-string type (never default-accept a malformed signal)", () => {
+    expect(parseDeri6Signal(signal({}, { type: "exec" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({}, { type: "OCR" }), sig)).toBeNull(); // case-sensitive enum
+    expect(parseDeri6Signal(signal({}, { type: 1 }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({}, { type: null }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({}, { type: { evil: true } }), sig)).toBeNull();
+  });
+
+  it("a bill signal still passes EVERY other gate (bad UUID / wrong secret / wrong channel → null)", () => {
+    expect(parseDeri6Signal(signal({}, { type: "bill", submission_id: "nope" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({}, { type: "bill", signal_secret: "wrong" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({ channel: "C_other" }, { type: "bill" }), sig)).toBeNull();
   });
 
   it("feature disabled (no sig) → null, path inert", () => {
-    expect(parseOcrSignal(signal(), undefined)).toBeNull();
+    expect(parseDeri6Signal(signal(), undefined)).toBeNull();
   });
 
   it("wrong channel → null even with the correct secret (channel gate is independent)", () => {
-    expect(parseOcrSignal(signal({ channel: "C_other" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({ channel: "C_other" }), sig)).toBeNull();
   });
 
   it("not a bot post (human message, no bot_id) → null", () => {
     const ev = signal();
     delete (ev as Record<string, unknown>).bot_id;
-    expect(parseOcrSignal(ev, sig)).toBeNull();
+    expect(parseDeri6Signal(ev, sig)).toBeNull();
   });
 
   it("non-message event type → null", () => {
-    expect(parseOcrSignal(signal({ type: "reaction_added" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({ type: "reaction_added" }), sig)).toBeNull();
   });
 
   it("missing / wrong secret → null (secret gate)", () => {
-    expect(parseOcrSignal(signal({}, { signal_secret: "wrong" }), sig)).toBeNull();
-    expect(parseOcrSignal(signal({ text: JSON.stringify({ submission_id: UUID }) }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({}, { signal_secret: "wrong" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({ text: JSON.stringify({ submission_id: UUID }) }), sig)).toBeNull();
   });
 
   it("correct secret but non-UUID submission_id → null (strict UUID, nothing else trusted)", () => {
-    expect(parseOcrSignal(signal({}, { submission_id: "not-a-uuid" }), sig)).toBeNull();
-    expect(parseOcrSignal(signal({}, { submission_id: "../../etc/passwd" }), sig)).toBeNull();
-    expect(parseOcrSignal(signal({}, { submission_id: 12345 }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({}, { submission_id: "not-a-uuid" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({}, { submission_id: "../../etc/passwd" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({}, { submission_id: 12345 }), sig)).toBeNull();
   });
 
   it("non-object JSON payloads never throw and are dropped (Toby null-guard: null/array/number/string/bool)", () => {
     for (const t of ["null", "[1,2,3]", "42", '"a string"', "true"]) {
-      expect(parseOcrSignal(signal({ text: t }), sig)).toBeNull();
+      expect(parseDeri6Signal(signal({ text: t }), sig)).toBeNull();
     }
   });
 
   it("malformed / empty / missing text → null (never throws)", () => {
-    expect(parseOcrSignal(signal({ text: "{not json" }), sig)).toBeNull();
-    expect(parseOcrSignal(signal({ text: "" }), sig)).toBeNull();
-    expect(parseOcrSignal({ type: "message", channel: sig.channelId, bot_id: "B1" }, sig)).toBeNull();
-    expect(parseOcrSignal(null, sig)).toBeNull();
+    expect(parseDeri6Signal(signal({ text: "{not json" }), sig)).toBeNull();
+    expect(parseDeri6Signal(signal({ text: "" }), sig)).toBeNull();
+    expect(parseDeri6Signal({ type: "message", channel: sig.channelId, bot_id: "B1" }, sig)).toBeNull();
+    expect(parseDeri6Signal(null, sig)).toBeNull();
   });
 });

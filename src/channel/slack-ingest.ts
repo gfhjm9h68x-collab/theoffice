@@ -51,21 +51,30 @@ function parseFiles(raw: unknown): SlackFile[] {
 
 const OCR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** The only signal types the deri6 ingest exception recognizes. A validated enum — never free text. */
+export type Deri6SignalType = "ocr" | "bill";
+
 /**
- * Scoped OCR trigger parser (deri6 tenant portal). This is the ONE narrow exception to the bot-drop:
- * it accepts ONLY a bot-posted message in the dedicated OCR channel whose JSON payload carries the
- * correct shared secret, and returns a strictly-validated submission_id. It NEVER returns bot-controlled
- * free text (only a UUID) and NEVER throws on hostile input. The global bot-drop in parseInbound is
- * unchanged; this runs before it. Pure + testable.
+ * Scoped deri6 signal parser (tenant portal). This is the ONE narrow exception to the bot-drop:
+ * it accepts ONLY a bot-posted message in the dedicated deri6 channel whose JSON payload carries the
+ * correct shared secret, and returns a strictly-validated submission_id + a strictly-validated `type`.
+ * It NEVER returns bot-controlled free text (only a UUID + an enum) and NEVER throws on hostile input.
+ * The global bot-drop in parseInbound is unchanged; this runs before it. Pure + testable.
+ *
+ * `type` is the ONLY surface added over the original OCR-only parser: it is a fixed enum — absent means
+ * "ocr" (back-compat with existing OCR signals), an explicit "ocr" or "bill" is honored, and ANYTHING
+ * ELSE (unknown string, number, object, null) is REJECTED. It selects which of two FIXED prompt templates
+ * the handler emits; it can never inject text. So the (channel + secret + UUID) anti-injection gate is
+ * exactly as narrow as before — just typed.
  */
-export function parseOcrSignal(
+export function parseDeri6Signal(
   event: unknown,
   sig?: { channelId: string; secret: string }
-): { submissionId: string; channel: string } | null {
+): { submissionId: string; channel: string; type: Deri6SignalType } | null {
   if (!sig) return null; // feature disabled (cfg.ocrSignal unset)
   const e = event as Record<string, unknown> | null;
   if (!e || e.type !== "message") return null;
-  if (e.channel !== sig.channelId) return null; // ONLY the dedicated OCR channel
+  if (e.channel !== sig.channelId) return null; // ONLY the dedicated deri6 channel
   if (!e.bot_id) return null; // the trigger IS a bot (webhook) post
   let p: unknown;
   try {
@@ -79,7 +88,13 @@ export function parseOcrSignal(
   if (typeof payload.signal_secret !== "string" || payload.signal_secret !== sig.secret) return null;
   const id = typeof payload.submission_id === "string" ? payload.submission_id : "";
   if (!OCR_UUID_RE.test(id)) return null; // strict UUID; nothing else is trusted
-  return { submissionId: id, channel: e.channel };
+  // Strict enum: absent => "ocr" (back-compat); explicit "ocr"/"bill" only; anything else is rejected
+  // (do NOT default-accept a malformed/unknown type — a bad signal is dropped, not coerced).
+  let type: Deri6SignalType;
+  if (payload.type === undefined || payload.type === "ocr") type = "ocr";
+  else if (payload.type === "bill") type = "bill";
+  else return null;
+  return { submissionId: id, channel: e.channel, type };
 }
 
 /**
@@ -226,19 +241,34 @@ export function startSlackIngest(cfg: EngineConfig): () => void {
         }
       }
       const event = args.event ?? args.body?.event;
-      // Scoped OCR trigger (deri6): the ONLY bot message allowed through, and ONLY as a data-only re-OCR
-      // wake. Runs BEFORE the human path; a fixed template + validated UUID is delivered (never bot text).
-      const ocrSig = parseOcrSignal(event, cfg.ocrSignal);
-      if (ocrSig && cfg.ocrSignal) {
-        enqueueInbound({
-          agentId: cfg.ocrSignal.agentId,
-          source: "channel",
-          prompt: `OCR-SIGNAL: run the deri6 OCR cross-check for submission ${ocrSig.submissionId}`,
-          replyChannel: ocrSig.channel,
-          replyUser: "ocr-signal", // synthetic — no human reply routing
-          dedupKey: `ocr:${ocrSig.submissionId}`, // idempotent: a re-post never double-processes
-        });
-        logger.info({ submissionId: ocrSig.submissionId }, "OCR trigger accepted");
+      // Scoped deri6 trigger: the ONLY bot message allowed through, and ONLY as a data-only wake.
+      // Runs BEFORE the human path; a FIXED template + validated UUID is delivered (never bot text).
+      // `type` (validated enum) selects one of two fixed templates — nothing else changes.
+      const sig = parseDeri6Signal(event, cfg.ocrSignal);
+      if (sig && cfg.ocrSignal) {
+        if (sig.type === "bill") {
+          enqueueInbound({
+            agentId: cfg.ocrSignal.agentId,
+            source: "channel",
+            prompt:
+              `BILL-SIGNAL: deri6 submission ${sig.submissionId} ready — pull the readings, compute the ` +
+              `itemized SZÁMVITELI BIZONYLAT, present the full amounts to Szoszo in Slack for approval; ` +
+              `do NOT issue/save/draft until he approves.`,
+            replyChannel: sig.channel,
+            replyUser: "bill-signal", // synthetic — no human reply routing
+            dedupKey: `bill:${sig.submissionId}`, // idempotent: a re-post never double-processes
+          });
+        } else {
+          enqueueInbound({
+            agentId: cfg.ocrSignal.agentId,
+            source: "channel",
+            prompt: `OCR-SIGNAL: run the deri6 OCR cross-check for submission ${sig.submissionId}`,
+            replyChannel: sig.channel,
+            replyUser: "ocr-signal", // synthetic — no human reply routing
+            dedupKey: `ocr:${sig.submissionId}`, // idempotent: a re-post never double-processes
+          });
+        }
+        logger.info({ submissionId: sig.submissionId, type: sig.type }, "deri6 signal accepted");
         return; // do NOT fall through to parseInbound / the human path
       }
       const parsed = parseInbound(event, agent.slack!.botUserId);
