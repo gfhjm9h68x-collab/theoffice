@@ -84,6 +84,12 @@ describe("frameForDelivery", () => {
     expect(t).not.toContain("[Slack message from the owner]");
   });
 
+  it("frames a synthetic archive-signal as a system signal too, NOT the owner", () => {
+    const t = frameForDelivery(item({ reply_user: "archive-signal", prompt: "POST-GENERATE: 2026/001" }));
+    expect(t).toBe("[System signal, not from the owner]\n\nPOST-GENERATE: 2026/001");
+    expect(t).not.toContain("[Slack message from the owner]");
+  });
+
   it("passes non-channel items through unwrapped (bus/scheduler/manual)", () => {
     expect(frameForDelivery(item({ source: "bus", prompt: "peer msg" }))).toBe("peer msg");
     expect(frameForDelivery(item({ source: "scheduler", prompt: "heartbeat" }))).toBe("heartbeat");
