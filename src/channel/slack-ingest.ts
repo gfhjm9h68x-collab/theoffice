@@ -251,9 +251,9 @@ export function startSlackIngest(cfg: EngineConfig): () => void {
             agentId: cfg.ocrSignal.agentId,
             source: "channel",
             prompt:
-              `BILL-SIGNAL: deri6 submission ${sig.submissionId} is ready — pull its readings, compute the ` +
-              `itemized havi elszámolás, and present the full amounts to Szoszo in Slack for approval. ` +
-              `Do NOT issue or save the bill until he approves.`,
+              `BILL-SIGNAL: deri6 submission ${sig.submissionId} ready — pull the readings, compute the ` +
+              `itemized SZÁMVITELI BIZONYLAT, present the full amounts to Szoszo in Slack for approval; ` +
+              `do NOT issue/save/draft until he approves.`,
             replyChannel: sig.channel,
             replyUser: "bill-signal", // synthetic — no human reply routing
             dedupKey: `bill:${sig.submissionId}`, // idempotent: a re-post never double-processes
