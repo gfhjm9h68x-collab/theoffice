@@ -78,6 +78,12 @@ describe("frameForDelivery", () => {
     expect(t).not.toContain("[Slack message from the owner]"); // never mislabeled as owner
   });
 
+  it("frames a synthetic bill-signal as a system signal too, NOT the owner", () => {
+    const t = frameForDelivery(item({ reply_user: "bill-signal", prompt: "BILL-SIGNAL: submission x" }));
+    expect(t).toBe("[System signal, not from the owner]\n\nBILL-SIGNAL: submission x");
+    expect(t).not.toContain("[Slack message from the owner]");
+  });
+
   it("passes non-channel items through unwrapped (bus/scheduler/manual)", () => {
     expect(frameForDelivery(item({ source: "bus", prompt: "peer msg" }))).toBe("peer msg");
     expect(frameForDelivery(item({ source: "scheduler", prompt: "heartbeat" }))).toBe("heartbeat");
