@@ -265,7 +265,7 @@ export function startSlackIngest(cfg: EngineConfig): () => void {
             source: "channel",
             prompt:
               `POST-GENERATE: deri6 bizonylat ${sig.sorszam} (submission ${sig.submissionId}) was approved on ` +
-              `the web + generated — fetch it from https://deri6.hu/bizonylat/view/${sig.sorszam!.replace("/", "-")} ` +
+              `the web + generated — fetch it from https://deri6.hu/svc/bizonylat/view/${sig.sorszam!.replace("/", "-")} ` +
               `with your gen token, then save it to Drive (05 Bizonylatok) and create the Gmail draft to the ` +
               `tenant. Dedup on submission ${sig.submissionId} — never double-file/draft on a retry.`,
             replyChannel: sig.channel,
