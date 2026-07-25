@@ -114,6 +114,7 @@ function setPref(k, v) {
 
 // ---------------- data ----------------
 let AGENTLIST = [], AGENTS = {}, OVERVIEW = {}, USAGE = {}, HOST = {}, SCHEDULES = [];
+let AUTH = null;                   // /api/auth/health — drives the sign-in banner
 let RUNTIMES = [{ id: "claude", label: "Claude Code", models: [], efforts: [] }];
 let MAX_CODEX = 2;
 let CURRENT_TAB = "agents";
@@ -158,14 +159,16 @@ function activityCopy(a, st) {
 }
 
 async function refreshData() {
-  const [agents, overview, usage, host, schedules, runtimes] = await Promise.all([
+  const [agents, overview, usage, host, schedules, runtimes, auth] = await Promise.all([
     api("/api/agents"),
     api("/api/overview").catch(() => ({})),
     api("/api/usage?window=24h").catch(() => ({ usage: [] })),
     api("/api/host").catch(() => ({})),
     api("/api/schedules").catch(() => ([])),
     api("/api/runtimes").catch(() => null),
+    api("/api/auth/health").catch(() => null),
   ]);
+  if (auth) AUTH = auth;
   AGENTLIST = agents;
   AGENTS = Object.fromEntries(agents.map((a) => [a.id, a]));
   OVERVIEW = overview || {};
@@ -579,6 +582,144 @@ window.cleanReset = async (id) => {
   alert(r && r.ok ? `Handoff + Reset started for ${nm(id)}. You'll get the Slack summary in a few minutes.` : `Could not start handoff + reset for ${nm(id)}.`);
   setTimeout(softRefresh, 1500);
 };
+// ---------------- Claude sign-in (no terminal needed) ----------------
+// The fleet shares ONE Claude credential. When it expires every agent goes silent at once while the
+// dashboard still shows them "running" — so this banner is driven by /api/auth/health, which actually
+// inspects the credential AND the live panes, rather than by the process-liveness check.
+
+// Set while the sign-in form is on screen. The 15s poll must NOT re-render over it — that would wipe
+// the code the owner is part-way through pasting, and the PKCE challenge is bound to that one session.
+let AUTH_UI_BUSY = false;
+
+function renderAuthBanner() {
+  const host = $("#auth-banner");
+  if (!host) return;
+  if (AUTH_UI_BUSY) return;
+  if (!AUTH || AUTH.ok) { host.innerHTML = ""; host.style.display = "none"; return; }
+
+  const warn = AUTH.status === "expiring-soon";
+  // "credential is fine, panes are stale" is a one-tap restart — don't send the owner through a login.
+  const restartOnly = AUTH.restartWouldFix === true;
+  const bg = warn ? "#7c5e10" : "#7f1d1d";
+  const bd = warn ? "#b8860b" : "#dc2626";
+  const icon = warn ? "⏳" : "🔴";
+  const action = restartOnly
+    ? `<button onclick="authRestart(this)" style="background:#f59e0b;color:#111;border:0;border-radius:9px;padding:10px 14px;font-weight:800;font-size:13px;cursor:pointer">↻ Restart signed-out agents</button>`
+    : `<button onclick="authSignIn()" style="background:#fff;color:#111;border:0;border-radius:9px;padding:10px 14px;font-weight:800;font-size:13px;cursor:pointer">🔑 Sign in to Claude</button>`;
+
+  host.style.display = "block";
+  host.innerHTML = `
+    <div style="background:${bg};border:1px solid ${bd};border-radius:12px;padding:12px 14px;margin:0 0 12px;
+                display:flex;gap:12px;align-items:center;flex-wrap:wrap;color:#fff">
+      <div style="font-size:20px;line-height:1">${icon}</div>
+      <div style="flex:1;min-width:200px">
+        <div style="font-weight:800;font-size:14px;margin-bottom:2px">
+          ${warn ? "Claude login expiring" : restartOnly ? "Agents need a restart" : "Fleet cannot authenticate"}
+        </div>
+        <div style="font-size:12.5px;opacity:.92">${esc(AUTH.message || "")}</div>
+      </div>
+      ${action}
+    </div>`;
+}
+
+/** Step 1: ask the engine to start `claude auth login` and show the link to open in a browser. */
+window.authSignIn = async () => {
+  const host = $("#auth-banner");
+  AUTH_UI_BUSY = true;
+  host.innerHTML = `<div style="background:#1f2937;border:1px solid #374151;border-radius:12px;padding:14px;margin:0 0 12px;color:#e5e7eb;font-size:13px">Starting sign-in… (a few seconds)</div>`;
+  let r;
+  try { r = await post("/api/auth/login/start", {}); }
+  catch (e) { AUTH_UI_BUSY = false; alert("Could not start sign-in: " + e.message); return renderAuthBanner(); }
+  if (!r || !r.ok || !r.url) { AUTH_UI_BUSY = false; alert("Could not start sign-in: " + ((r && r.error) || "unknown error")); return renderAuthBanner(); }
+
+  host.innerHTML = `
+    <div style="background:#12233a;border:1px solid #1d4ed8;border-radius:12px;padding:14px;margin:0 0 12px;color:#e5e7eb">
+      <div style="font-weight:800;font-size:14px;margin-bottom:8px">🔑 Sign in to Claude — 2 steps</div>
+      <div style="font-size:13px;margin-bottom:6px"><b>1.</b> Open this link and approve:</div>
+      <a href="${esc(r.url)}" target="_blank" rel="noopener"
+         style="display:block;background:#2563eb;color:#fff;text-align:center;text-decoration:none;
+                border-radius:9px;padding:12px;font-weight:800;font-size:14px;margin-bottom:6px">Open sign-in page ↗</a>
+      <button onclick="authCopyUrl(this)" data-url="${esc(r.url)}"
+              style="width:100%;background:transparent;color:#93c5fd;border:1px solid #1d4ed8;border-radius:9px;
+                     padding:8px;font-size:12px;cursor:pointer;margin-bottom:12px">Copy link instead</button>
+      <div style="font-size:13px;margin-bottom:6px"><b>2.</b> Paste the code it gives you:</div>
+      <input id="auth-code" type="text" inputmode="text" autocapitalize="off" autocomplete="off" spellcheck="false"
+             placeholder="paste code here"
+             style="width:100%;box-sizing:border-box;background:#0b1220;color:#e5e7eb;border:1px solid #334155;
+                    border-radius:9px;padding:12px;font-size:15px;margin-bottom:8px" />
+      <div style="display:flex;gap:8px">
+        <button onclick="authSubmitCode(this)"
+                style="flex:1;background:#10b981;color:#04231a;border:0;border-radius:9px;padding:12px;
+                       font-weight:800;font-size:14px;cursor:pointer">Finish sign-in</button>
+        <button onclick="authCancel()"
+                style="flex:0 0 auto;background:transparent;color:#94a3b8;border:1px solid #334155;
+                       border-radius:9px;padding:12px 14px;font-size:13px;cursor:pointer">Cancel</button>
+      </div>
+      <div id="auth-msg" style="font-size:12.5px;color:#fca5a5;margin-top:8px"></div>
+    </div>`;
+  const el = $("#auth-code");
+  if (el) { el.focus(); el.addEventListener("keydown", (e) => { if (e.key === "Enter") $("#auth-msg").parentElement.querySelector("button[onclick^='authSubmitCode']").click(); }); }
+};
+
+window.authCopyUrl = async (btn) => {
+  const url = btn.dataset.url || "";
+  try { await navigator.clipboard.writeText(url); btn.textContent = "Copied ✓"; }
+  catch { prompt("Copy this link:", url); }
+};
+
+/** Step 2: hand the pasted code to the waiting CLI, then restart every agent onto the new credential. */
+window.authSubmitCode = async (btn) => {
+  const input = $("#auth-code");
+  const msg = $("#auth-msg");
+  const code = (input && input.value || "").trim();
+  if (!code) { msg.textContent = "Paste the code first."; return; }
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Signing in…";
+  msg.style.color = "#93c5fd"; msg.textContent = "Verifying the code and restarting agents…";
+  try {
+    const r = await post("/api/auth/login/code", { code });
+    if (r && r.ok) {
+      const n = (r.restarted || []).length;
+      AUTH_UI_BUSY = false;
+      $("#auth-banner").innerHTML = `
+        <div style="background:#064e3b;border:1px solid #10b981;border-radius:12px;padding:14px;margin:0 0 12px;color:#d1fae5">
+          <div style="font-weight:800;font-size:14px">✅ Signed in — fleet is back</div>
+          <div style="font-size:12.5px;margin-top:4px">Restarted ${n} agent${n === 1 ? "" : "s"} onto the new login. Give them a few seconds, then message them as normal.</div>
+        </div>`;
+      setTimeout(softRefresh, 4000);
+      return;
+    }
+    msg.style.color = "#fca5a5";
+    msg.textContent = (r && r.error) || "Sign-in failed. Start again to get a fresh link.";
+  } catch (e) {
+    msg.style.color = "#fca5a5";
+    msg.textContent = "Error: " + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+};
+
+window.authCancel = async () => {
+  try { await post("/api/auth/login/cancel", {}); } catch { /* best effort */ }
+  AUTH_UI_BUSY = false;
+  renderAuthBanner();
+};
+
+/** Credential is valid, panes are stale — the case a plain restart genuinely fixes. */
+window.authRestart = async (btn) => {
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Restarting…";
+  try {
+    const r = await post("/api/auth/restart", {});
+    alert(r && r.ok ? `Restarted ${(r.restarted || []).length} agent(s).` : "Restart failed.");
+  } catch (e) {
+    alert("Restart failed: " + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+    setTimeout(softRefresh, 3000);
+  }
+};
+
 window.emergencyRestart = async (btn) => {
   if (!confirm("EMERGENCY RESTART\n\nThis will:\n• save the ENTIRE queue + all messages to a backup (nothing lost)\n• clear the queue\n• restart every agent\n• brief Michael to summarise it to you on Slack\n\nUse this when the fleet is going crazy / your messages aren't getting through. Proceed?")) return;
   const label = btn ? btn.textContent : "";
@@ -680,6 +821,7 @@ function tick() {
 }
 async function softRefresh() {
   await refreshData();
+  renderAuthBanner();
   renderStrip(); renderTabs();
   if (CURRENT_TAB === "agents") await showTab("agents");
 }
@@ -698,7 +840,7 @@ async function connect() {
     await refreshData();
     $("#gate").classList.add("hidden");
     $("#app").classList.remove("hidden");
-    renderHeader(); renderStrip(); renderTabs();
+    renderHeader(); renderAuthBanner(); renderStrip(); renderTabs();
     await showTab(CURRENT_TAB);
   } catch (e) {
     showGate(e.message);

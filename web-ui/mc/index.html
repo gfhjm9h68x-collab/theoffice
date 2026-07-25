@@ -34,6 +34,9 @@
     <div id="app" class="hidden">
       <header><div class="hwrap" id="hwrap"></div></header>
       <main class="page">
+        <!-- Claude auth banner: only visible when the fleet's login is expired/expiring or panes
+             are signed out. Rendered by renderAuthBanner() from /api/auth/health. -->
+        <div id="auth-banner" style="display:none"></div>
         <div class="strip" id="strip"></div>
         <nav class="tabs" id="tabs"></nav>
         <div id="panel"></div>

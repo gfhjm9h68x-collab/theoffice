@@ -25,6 +25,9 @@
     </header>
 
     <main>
+      <!-- Claude auth banner — only shown when the fleet's login is expired/expiring or panes are
+           signed out. Driven by /api/auth/health (see renderAuthBanner in app.js). -->
+      <div id="auth-banner" style="display:none"></div>
       <section id="overview" class="cards"></section>
 
       <nav class="tabs">

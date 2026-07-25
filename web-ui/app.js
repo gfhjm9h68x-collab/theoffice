@@ -383,11 +383,117 @@ async function showTab(name) {
   }
 }
 
+// ---------------- Claude sign-in (no terminal needed) ----------------
+// The whole fleet shares ONE Claude credential. When it lapses every agent goes silent while
+// /api/agents still reports them "running" — process liveness is not authentication. This banner is
+// driven by /api/auth/health, which inspects the credential AND the live panes.
+let AUTH = null;
+// Guards the poll from re-rendering over a half-typed code (the PKCE challenge is bound to one session).
+let AUTH_UI_BUSY = false;
+
+async function refreshAuth() {
+  try { AUTH = await api("/api/auth/health"); } catch { return; }
+  renderAuthBanner();
+}
+
+function renderAuthBanner() {
+  const host = $("#auth-banner");
+  if (!host || AUTH_UI_BUSY) return;
+  if (!AUTH || AUTH.ok) { host.innerHTML = ""; host.style.display = "none"; return; }
+  const warn = AUTH.status === "expiring-soon";
+  const restartOnly = AUTH.restartWouldFix === true;
+  const action = restartOnly
+    ? `<button onclick="authRestart(this)" style="background:#f59e0b;color:#111;border:0;border-radius:8px;padding:9px 13px;font-weight:800;cursor:pointer">↻ Restart signed-out agents</button>`
+    : `<button onclick="authSignIn()" style="background:#fff;color:#111;border:0;border-radius:8px;padding:9px 13px;font-weight:800;cursor:pointer">🔑 Sign in to Claude</button>`;
+  host.style.display = "block";
+  host.innerHTML = `
+    <div style="background:${warn ? "#7c5e10" : "#7f1d1d"};border:1px solid ${warn ? "#b8860b" : "#dc2626"};
+                border-radius:10px;padding:12px 14px;margin:0 0 14px;color:#fff;display:flex;gap:12px;
+                align-items:center;flex-wrap:wrap">
+      <div style="font-size:20px">${warn ? "⏳" : "🔴"}</div>
+      <div style="flex:1;min-width:220px">
+        <div style="font-weight:800;margin-bottom:2px">${warn ? "Claude login expiring" : restartOnly ? "Agents need a restart" : "Fleet cannot authenticate"}</div>
+        <div style="font-size:13px;opacity:.92">${esc(AUTH.message || "")}</div>
+      </div>${action}
+    </div>`;
+}
+
+window.authSignIn = async () => {
+  const host = $("#auth-banner");
+  AUTH_UI_BUSY = true;
+  host.innerHTML = `<div style="background:#1f2937;border:1px solid #374151;border-radius:10px;padding:14px;margin:0 0 14px;color:#e5e7eb">Starting sign-in…</div>`;
+  let r;
+  try { r = await post("/api/auth/login/start", {}); }
+  catch (e) { AUTH_UI_BUSY = false; alert("Could not start sign-in: " + e.message); return renderAuthBanner(); }
+  if (!r || !r.ok || !r.url) { AUTH_UI_BUSY = false; alert("Could not start sign-in: " + ((r && r.error) || "unknown error")); return renderAuthBanner(); }
+  host.innerHTML = `
+    <div style="background:#12233a;border:1px solid #1d4ed8;border-radius:10px;padding:14px;margin:0 0 14px;color:#e5e7eb">
+      <div style="font-weight:800;margin-bottom:8px">🔑 Sign in to Claude — 2 steps</div>
+      <div style="font-size:13px;margin-bottom:6px"><b>1.</b> Open this link and approve:</div>
+      <a href="${esc(r.url)}" target="_blank" rel="noopener" style="display:inline-block;background:#2563eb;color:#fff;
+         text-decoration:none;border-radius:8px;padding:10px 16px;font-weight:800;margin-bottom:12px">Open sign-in page ↗</a>
+      <div style="font-size:13px;margin-bottom:6px"><b>2.</b> Paste the code it gives you:</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input id="auth-code" type="text" autocomplete="off" spellcheck="false" placeholder="paste code here"
+               style="flex:1;min-width:240px;background:#0b1220;color:#e5e7eb;border:1px solid #334155;
+                      border-radius:8px;padding:10px" />
+        <button onclick="authSubmitCode(this)" style="background:#10b981;color:#04231a;border:0;border-radius:8px;
+                padding:10px 16px;font-weight:800;cursor:pointer">Finish sign-in</button>
+        <button onclick="authCancel()" style="background:transparent;color:#94a3b8;border:1px solid #334155;
+                border-radius:8px;padding:10px 14px;cursor:pointer">Cancel</button>
+      </div>
+      <div id="auth-msg" style="font-size:13px;color:#fca5a5;margin-top:8px"></div>
+    </div>`;
+  const el = $("#auth-code"); if (el) el.focus();
+};
+
+window.authSubmitCode = async (btn) => {
+  const code = ($("#auth-code")?.value || "").trim();
+  const msg = $("#auth-msg");
+  if (!code) { msg.textContent = "Paste the code first."; return; }
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Signing in…";
+  msg.style.color = "#93c5fd"; msg.textContent = "Verifying the code and restarting agents…";
+  try {
+    const r = await post("/api/auth/login/code", { code });
+    if (r && r.ok) {
+      AUTH_UI_BUSY = false;
+      const n = (r.restarted || []).length;
+      $("#auth-banner").innerHTML = `<div style="background:#064e3b;border:1px solid #10b981;border-radius:10px;
+        padding:14px;margin:0 0 14px;color:#d1fae5"><b>✅ Signed in — fleet is back.</b> Restarted ${n} agent(s)
+        onto the new login.</div>`;
+      setTimeout(refreshAuth, 5000);
+      return;
+    }
+    msg.style.color = "#fca5a5";
+    msg.textContent = (r && r.error) || "Sign-in failed. Start again for a fresh link.";
+  } catch (e) {
+    msg.style.color = "#fca5a5"; msg.textContent = "Error: " + e.message;
+  } finally { btn.disabled = false; btn.textContent = label; }
+};
+
+window.authCancel = async () => {
+  try { await post("/api/auth/login/cancel", {}); } catch { /* best effort */ }
+  AUTH_UI_BUSY = false;
+  renderAuthBanner();
+};
+
+window.authRestart = async (btn) => {
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Restarting…";
+  try {
+    const r = await post("/api/auth/restart", {});
+    alert(r && r.ok ? `Restarted ${(r.restarted || []).length} agent(s).` : "Restart failed.");
+  } catch (e) { alert("Restart failed: " + e.message); }
+  finally { btn.disabled = false; btn.textContent = label; setTimeout(refreshAuth, 3000); }
+};
+
 async function connect() {
   try {
     await loadAgentsMap();
     await loadOverview();
     await showTab("agents");
+    await refreshAuth();
   } catch (e) {
     $("#conn").textContent = e.message;
   }
@@ -399,6 +505,7 @@ $("#save").addEventListener("click", () => {
   connect();
 });
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+setInterval(() => { if (TOKEN) refreshAuth(); }, 20000);
 if (TOKEN) {
   $("#token").value = TOKEN;
   connect();

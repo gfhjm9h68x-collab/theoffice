@@ -37,8 +37,19 @@ export function listSessions(socket: string): string[] {
   return r.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
 }
 
-export function capturePane(socket: string, name: string): string | null {
-  const r = tmux(socket, ["capture-pane", "-t", name, "-p"]);
+export interface CaptureOpts {
+  /** tmux -J: rejoin hard-wrapped lines. Needed when reading a long unbroken string (e.g. an OAuth
+   *  URL) out of a pane — without it the value comes back split across rows at the pane width. */
+  join?: boolean;
+  /** tmux -S: start line, negative = scrollback (e.g. -200 for the last 200 lines incl. history). */
+  start?: number;
+}
+
+export function capturePane(socket: string, name: string, opts: CaptureOpts = {}): string | null {
+  const args = ["capture-pane", "-t", name, "-p"];
+  if (opts.join) args.push("-J");
+  if (opts.start !== undefined) args.push("-S", String(opts.start));
+  const r = tmux(socket, args);
   return r.code === 0 ? r.stdout : null;
 }
 
@@ -63,6 +74,10 @@ export interface NewSessionOpts {
   command: string[];
   /** command-scoped env (prefixed as `env K=V ...`, never leaked to siblings) */
   env?: Record<string, string>;
+  /** pane width/height. A DETACHED session is 80x24 by default no matter what COLUMNS/LINES say, so
+   *  set these explicitly when the pane content must not hard-wrap. */
+  width?: number;
+  height?: number;
 }
 
 /**
@@ -75,7 +90,8 @@ export function newSession(socket: string, name: string, opts: NewSessionOpts): 
     ? "env " + Object.entries(opts.env).map(([k, v]) => `${k}=${shq(v)}`).join(" ") + " "
     : "";
   const cmd = envPrefix + opts.command.map(shq).join(" ");
-  const r = tmux(socket, ["new-session", "-d", "-s", name, "-c", opts.cwd, cmd]);
+  const size = opts.width && opts.height ? ["-x", String(opts.width), "-y", String(opts.height)] : [];
+  const r = tmux(socket, ["new-session", "-d", "-s", name, ...size, "-c", opts.cwd, cmd]);
   return r.code === 0;
 }
 

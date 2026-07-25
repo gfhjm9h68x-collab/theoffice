@@ -6,6 +6,7 @@ import { startSlackSender } from "./channel/slack-send.js";
 import { startScheduler } from "./scheduler/index.js";
 import { startBus } from "./bus/index.js";
 import { startServer } from "./web/server.js";
+import { startAuthWatchdog } from "./web/auth-watchdog.js";
 import { reapStaleDelivering } from "./queue/index.js";
 import { log } from "./logger.js";
 
@@ -56,6 +57,11 @@ async function main(): Promise<void> {
 
   // Phase 5: dashboard HTTP API + web UI (bearer-auth, localhost-bound).
   stops.push(startServer(cfg));
+
+  // Phase 6: auth watchdog. The engine keeps working through a Claude auth outage (Slack bot tokens
+  // are unrelated to the Claude credential), so it is the only thing that can still raise the alarm
+  // when every agent has gone silent. Also self-heals stale panes when the credential is actually fine.
+  stops.push(startAuthWatchdog(cfg));
 
   logger.info("boot complete");
 

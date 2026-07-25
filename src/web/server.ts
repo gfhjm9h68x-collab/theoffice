@@ -16,6 +16,14 @@ import { saveMemory, searchMemories } from "../memory/store.js";
 import { computeUsage, WINDOW_MS } from "./usage.js";
 import { checkUpdates, applyUpdate } from "./update.js";
 import { runEmergencyRestart } from "./emergency.js";
+import {
+  getAuthHealth,
+  getLoginState,
+  startLogin,
+  submitCode,
+  cancelLogin,
+  restartSignedOutAgents,
+} from "./claude-auth.js";
 import { sessionNameFor, launchAgent } from "../session/session-manager.js";
 import { hasSession, capturePane, killSession } from "../session/tmux.js";
 import { detectPaneState } from "../session/pane-state.js";
@@ -407,6 +415,54 @@ async function handleApi(
       logger.error({ err: e }, "emergency-restart failed");
       return json(res, 500, { ok: false, error: String((e as Error).message) });
     }
+  }
+
+  // ---- Claude sign-in, from the dashboard (no terminal). See src/web/claude-auth.ts for the why. ----
+
+  // GET /api/auth/health — credential state + a live per-pane signed-out scan. This is the check
+  // /api/agents deliberately does NOT do: `running=true` only proves a process exists, not that it
+  // can authenticate, which is why a total auth outage used to show up as a fully green dashboard.
+  if (path === "/api/auth/health" && m === "GET") {
+    return json(res, 200, { ...getAuthHealth(cfg), login: getLoginState() });
+  }
+
+  // POST /api/auth/login/start — spawn `claude auth login` and hand back the browser URL.
+  if (path === "/api/auth/login/start" && m === "POST") {
+    try {
+      return json(res, 200, await startLogin(cfg));
+    } catch (e) {
+      logger.error({ err: e }, "login start failed");
+      return json(res, 500, { ok: false, error: String((e as Error).message) });
+    }
+  }
+
+  // POST /api/auth/login/code {code, restart?} — submit the pasted code; on success restart the panes
+  // so they pick the new credential up (the step that makes the fix actually take effect).
+  if (path === "/api/auth/login/code" && m === "POST") {
+    const raw = await readBody(req, res); if (raw === null) return;
+    const b = parseJson(raw) ?? {};
+    try {
+      const r = await submitCode(cfg, String(b.code ?? ""));
+      if (!r.ok) return json(res, 200, r);
+      const restarted = b.restart === false ? { restarted: [], failed: [] } : restartSignedOutAgents(cfg, { all: true });
+      return json(res, 200, { ...r, ...restarted });
+    } catch (e) {
+      logger.error({ err: e }, "login code failed");
+      return json(res, 500, { ok: false, error: String((e as Error).message) });
+    }
+  }
+
+  // POST /api/auth/login/cancel — tear down an abandoned login session.
+  if (path === "/api/auth/login/cancel" && m === "POST") {
+    cancelLogin(cfg);
+    return json(res, 200, { ok: true });
+  }
+
+  // POST /api/auth/restart {all?} — the "credential is fine, panes are stale" repair, on its own.
+  if (path === "/api/auth/restart" && m === "POST") {
+    const raw = await readBody(req, res); if (raw === null) return;
+    const b = parseJson(raw) ?? {};
+    return json(res, 200, { ok: true, ...restartSignedOutAgents(cfg, { all: b.all === true }) });
   }
 
   // GET /api/daily-logs?agent=&limit=
