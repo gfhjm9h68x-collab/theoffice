@@ -261,4 +261,27 @@ describe("agent effort/model tuning", () => {
     expect(res.status).toBe(200);
     expect(agentJson().model).toBe("claude-opus-5");
   });
+
+  it("refuses effort on a non-claude runtime — the knob does not exist there", async () => {
+    writeFileSync(
+      join(tempDir, "agents", "home", "agent.json"),
+      JSON.stringify({ displayName: "Home", runtime: "gemini" }),
+    );
+    const res = await tune("effort", { effort: "xhigh" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/claude-only/i);
+    expect(agentJson().effort).toBeUndefined();
+  });
+
+  it("applies a non-claude model change by restarting, not by injecting a slash command", async () => {
+    writeFileSync(
+      join(tempDir, "agents", "home", "agent.json"),
+      JSON.stringify({ displayName: "Home", runtime: "gemini" }),
+    );
+    const res = await tune("model", { model: "gemini-3.6-flash-high" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.note).toMatch(/restarted/i);
+    expect(agentJson().model).toBe("gemini-3.6-flash-high");
+  });
 });

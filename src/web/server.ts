@@ -71,7 +71,7 @@ function contextPctFromTranscript(agentDir: string): number | null {
     return null;
   }
 }
-import { isKnownRuntime, listRuntimes, DEFAULT_RUNTIME } from "../session/runtime.js";
+import { isKnownRuntime, listRuntimes, runtimeFor, DEFAULT_RUNTIME } from "../session/runtime.js";
 import { getOrCreateToken, checkBearer } from "./auth.js";
 import { log } from "../logger.js";
 
@@ -688,6 +688,14 @@ async function tuneAgent(
   const trimmed = wanted.trim();
   const clearing = !trimmed || trimmed === "default";
 
+  // Live injection is a CLAUDE-runtime mechanism: /model and /effort are Claude Code slash commands.
+  // A codex or gemini pane would just receive that text as a prompt, so those providers keep the old
+  // restart-to-apply path, and effort — which they don't have at all — is refused outright.
+  const isClaude = runtimeFor(agent).id === "claude";
+  if (!isClaude && kind === "effort") {
+    return json(res, 400, { error: "effort is claude-only", runtime: runtimeFor(agent).id });
+  }
+
   let value: string | undefined;
   if (!clearing) {
     if (kind === "effort") {
@@ -710,6 +718,20 @@ async function tuneAgent(
       [kind]: "default",
       applied: false,
       note: "cleared; applies at next restart",
+    });
+  }
+
+  // non-claude providers: no slash-command channel, so restart the session to pick the value up
+  if (!isClaude) {
+    const session = sessionNameFor(agent.id);
+    killSession(cfg.tmux.socket, session);
+    const fresh = loadAgents(cfg).find((a) => a.id === agent.id);
+    if (fresh) launchAgent(cfg, fresh);
+    return json(res, 200, {
+      ok: true,
+      [kind]: value,
+      applied: true,
+      note: `restarted ${agent.id} to apply (this provider has no live-switch path)`,
     });
   }
 
