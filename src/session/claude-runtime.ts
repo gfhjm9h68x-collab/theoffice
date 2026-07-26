@@ -12,6 +12,7 @@ import { recordInbound } from "../memory/conversation.js";
 import { recallForPrompt } from "../memory/recall.js";
 import type { Runtime, QueuedItem } from "./runtime.js";
 import { frameForDelivery } from "./delivery.js";
+import { EFFORT_LEVELS } from "./effort.js";
 
 /**
  * Claude runtime — the default provider. Each agent runs a persistent `claude` TUI in tmux that we
@@ -113,6 +114,11 @@ function launchClaude(cfg: EngineConfig, agent: AgentDef): boolean {
   const session = sessionNameFor(agent.id);
   const command = ["claude", "--dangerously-skip-permissions"];
   if (agent.model) command.push("--model", agent.model);
+  // Effort is pinned the same way as the model. Both flags override whatever is in the SHARED
+  // ~/.claude/settings.json (all agents run on one HOME, because the credentials live there), which
+  // is exactly why a pinned value survives restarts and can't be knocked over by another agent's
+  // switch — /effort and /model also write themselves into that file as a default.
+  if (agent.effort) command.push("--effort", agent.effort);
   const home = process.env.HOME ?? "";
   const env: Record<string, string> = {
     // ~/.local/bin first so the agent can call `office-say` to reply on Slack
@@ -189,8 +195,17 @@ async function deliverClaude(cfg: EngineConfig, agent: AgentDef, item: QueuedIte
 export const claudeRuntime: Runtime = {
   id: "claude",
   label: "Claude (Claude Code)",
-  // Selectable --model ids. NB: Fable 5 / Mythos 5 are intentionally omitted (currently access-restricted).
-  models: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+  // Selectable --model ids, verified live against this account's /model menu (2026-07-26).
+  // Opus 4.8 is no longer listed in that menu but stays here: `home` and `zeus` run on it and the
+  // menu itself notes that previous model names remain usable via --model, which is how we launch.
+  models: [
+    "claude-opus-5",
+    "claude-fable-5",
+    "claude-sonnet-5",
+    "claude-opus-4-8",
+    "claude-haiku-4-5",
+  ],
+  efforts: EFFORT_LEVELS,
   launch: launchClaude,
   // Readiness for a persistent TUI is decided live inside deliver() via pane state, not a tracked flag.
   isBusy: () => false,
