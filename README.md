@@ -41,6 +41,10 @@ the metered SDK), but earns reliability from two structural choices:
   tier filters, a real kanban board, human-readable schedules, token-usage by time window, live
   controls (set an agent's model, restart/start/stop, enable/disable, move/archive kanban cards), and
   built-in IP-based brute-force rate limiting. (Security note: on direct LAN access bypassing nginx, X-Forwarded-For can be spoofed; public access via nginx is secure since it overwrites the header.)
+- **Per-agent model & thinking effort** — pin either per agent; the pin survives restarts, and
+  switching applies to the *running* session, so the agent keeps its conversation. Settable from the
+  dashboard or by just asking the agent on Slack. See
+  [`docs/MODEL-AND-EFFORT.md`](docs/MODEL-AND-EFFORT.md).
 - **Per-agent security profiles** — restrict which connectors/files an agent can touch (e.g. a
   shared agent that can't reach your email or finances).
 

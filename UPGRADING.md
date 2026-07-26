@@ -5,6 +5,52 @@ dashboard ⟳ Update button), skim the entries newer than your previous version.
 
 ---
 
+## Per-agent effort + live model switching, refreshed model registries (2026-07-26)
+
+Agents can now pin a **thinking effort** as well as a model, and changing either no longer restarts
+the agent — see [`docs/MODEL-AND-EFFORT.md`](docs/MODEL-AND-EFFORT.md).
+
+**Action required if you run a `gemini` agent.** The Gemini model list was in the wrong *format*: it
+carried human labels (`"Gemini 3.1 Pro (High)"`) while `agy` advertises slugs
+(`gemini-3.1-pro-high`). An unrecognised name appears to fall back to the account default silently,
+so an agent could look configured while running on something else. Check each Gemini agent:
+
+```bash
+grep -h '"model"' tenant/agents/*/agent.json
+agy models        # the authoritative list for your account
+```
+
+If the value is not in `agy models`, replace it with the matching slug (dashboard dropdown, or edit
+`agent.json` and restart the agent). A guard test now keeps the registry slug-shaped.
+
+**No action required otherwise:**
+
+- The Claude model list gained Opus 5, Fable 5 and Sonnet 5, and the Haiku entry moved from the dated
+  snapshot id to the `claude-haiku-4-5` alias. Existing pins keep working — previous model names
+  remain usable via `--model`, which is how the engine launches agents.
+- `agent.json` gains an optional `effort` (`low`/`medium`/`high`/`xhigh`/`max`, Claude runtime only).
+  Unset = unchanged behaviour. An unknown value normalizes to unset rather than failing the launch.
+- A model change now applies to the **running** session instead of killing it, so agents keep their
+  context. Non-Claude runtimes keep the previous restart-to-apply behaviour.
+
+**Two optional follow-ups:**
+
+1. Teach existing agents to honour a plain-language request ("switch yourself to xhigh"):
+   ```bash
+   bash scripts/backfill-office-tune-doc.sh
+   ```
+   Idempotent; new agents get it from the template. `office-tune` itself is installed by
+   `scripts/install.sh` alongside `office-say`, or manually:
+   ```bash
+   install -m 0755 scripts/office-tune.sh "$HOME/.local/bin/office-tune"
+   ```
+2. If you use the interactive `claude` CLI yourself, record your own defaults so an agent's switch
+   cannot drift them (agents share `~/.claude/settings.json` with you). In tenant overrides:
+   ```json
+   { "owner": { "claudeModel": "claude-opus-5", "claudeEffort": "high" } }
+   ```
+   Unset defaults to restoring `effortLevel: "high"` and removing any `model` key.
+
 ## Optional trusted-proxy gate for client-IP (2026-06-18)
 
 The dashboard rate limiter keys on the client IP from `X-Real-IP` / `X-Forwarded-For`. Those are only
