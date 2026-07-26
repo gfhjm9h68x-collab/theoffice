@@ -12,6 +12,7 @@ import { recordInbound } from "../memory/conversation.js";
 import { recallForPrompt } from "../memory/recall.js";
 import type { Runtime, QueuedItem } from "./runtime.js";
 import { frameForDelivery } from "./delivery.js";
+import { EFFORT_LEVELS } from "./effort.js";
 
 /**
  * Claude runtime — the default provider. Each agent runs a persistent `claude` TUI in tmux that we
@@ -204,6 +205,7 @@ export const claudeRuntime: Runtime = {
     "claude-opus-4-8",
     "claude-haiku-4-5",
   ],
+  efforts: EFFORT_LEVELS,
   launch: launchClaude,
   // Readiness for a persistent TUI is decided live inside deliver() via pane state, not a tracked flag.
   isBusy: () => false,

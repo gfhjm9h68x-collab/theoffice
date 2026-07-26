@@ -223,6 +223,7 @@ export const geminiRuntime: Runtime = {
     "claude-opus-4-6-thinking",
     "gpt-oss-120b-medium",
   ],
+  efforts: [],
   launch: launchGeminiHolder,
   isBusy: isGeminiBusy,
   deliver: deliverGeminiPrompt,

@@ -47,6 +47,11 @@ export interface Runtime {
    * For claude these are the `--model` ids; codex uses the account's model, so it advertises none.
    */
   readonly models: readonly string[];
+  /**
+   * Selectable "thinking effort" levels for this provider (UI hint only; empty = the provider has no
+   * such knob and the dashboard hides the control). Claude exposes five; codex and gemini none.
+   */
+  readonly efforts: readonly string[];
 
   /** Launch this agent's tmux session. Returns true if a new session was created. */
   launch(cfg: EngineConfig, agent: AgentDef): boolean;
@@ -94,8 +99,18 @@ export function runtimeFor(agent: AgentDef): Runtime {
 }
 
 /** Registered providers for the dashboard dropdown (id + label + selectable models). */
-export function listRuntimes(): { id: string; label: string; models: readonly string[] }[] {
-  return [...registry.values()].map((r) => ({ id: r.id, label: r.label, models: r.models }));
+export function listRuntimes(): {
+  id: string;
+  label: string;
+  models: readonly string[];
+  efforts: readonly string[];
+}[] {
+  return [...registry.values()].map((r) => ({
+    id: r.id,
+    label: r.label,
+    models: r.models,
+    efforts: r.efforts,
+  }));
 }
 
 // Wire the providers shipped today. New providers register themselves by being imported + added here.

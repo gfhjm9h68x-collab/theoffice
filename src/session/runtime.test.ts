@@ -72,6 +72,18 @@ describe("runtime registry", () => {
     expect(models).toContain("gemini-3.1-pro-high");
   });
 
+  it("advertises effort levels for claude only", () => {
+    expect([...getRuntime("claude").efforts]).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    // non-claude providers have no equivalent knob; the UI hides the control when the list is empty
+    expect(getRuntime("codex").efforts.length).toBe(0);
+    expect(getRuntime("gemini").efforts.length).toBe(0);
+  });
+
+  it("exposes efforts through listRuntimes for the dashboard", () => {
+    const claude = listRuntimes().find((r) => r.id === "claude")!;
+    expect(claude.efforts).toContain("xhigh");
+  });
+
   it("claude readiness is decided live (isBusy always false), not via a tracked flag", () => {
     expect(getRuntime("claude").isBusy("x")).toBe(false);
   });
