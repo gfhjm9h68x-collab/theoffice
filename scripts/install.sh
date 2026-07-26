@@ -81,10 +81,11 @@ if [ -f package-lock.json ]; then npm ci --include=dev --no-audit --no-fund; els
 say "Building (tsc -> dist/)"
 npm run build
 
-say "Installing the office-say / office-tune helpers -> ~/.local/bin/"
+say "Installing the office-say / office-tune / office-backlog helpers -> ~/.local/bin/"
 mkdir -p "$HOME/.local/bin"
 install -m 0755 "$INSTALL_DIR/scripts/office-say.sh" "$HOME/.local/bin/office-say"
 install -m 0755 "$INSTALL_DIR/scripts/office-tune.sh" "$HOME/.local/bin/office-tune"
+install -m 0755 "$INSTALL_DIR/scripts/office-backlog.sh" "$HOME/.local/bin/office-backlog"
 
 # ---- 3. tenant skeleton -----------------------------------------------------
 say "Preparing tenant root: $TENANT_ROOT"
@@ -95,6 +96,20 @@ if [ ! -f "$TENANT_ROOT/config/overrides.json" ]; then
     cp "$INSTALL_DIR/tenant/config/overrides.example.json" "$TENANT_ROOT/config/overrides.json"
     say "seeded tenant/config/overrides.json from example — EDIT it (owner, channel, slackUserId)"
   fi
+fi
+
+# Seed shipped-default scheduled tasks (issue #21 §2 kanban-grooming, and any future ones). Each template
+# task is copied into the live tenant ONLY IF ABSENT — an existing task the operator has edited, disabled,
+# or deleted is NEVER clobbered or re-created on a re-install.
+if [ -d "$INSTALL_DIR/templates/scheduled-tasks" ]; then
+  for _t in "$INSTALL_DIR"/templates/scheduled-tasks/*/; do
+    [ -d "$_t" ] || continue
+    _name=$(basename "$_t")
+    if [ ! -e "$TENANT_ROOT/scheduled-tasks/$_name" ]; then
+      cp -r "$_t" "$TENANT_ROOT/scheduled-tasks/$_name"
+      say "seeded default scheduled task: $_name"
+    fi
+  done
 fi
 
 # ---- 3b. dashboard bind: localhost vs LAN -----------------------------------
