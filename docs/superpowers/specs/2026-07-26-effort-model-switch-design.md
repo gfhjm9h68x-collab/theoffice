@@ -159,10 +159,17 @@ discarding context too.
 
 ## Security
 
-`office-tune` may only tune **its own** agent: the engine takes the agent id from `OFFICE_AGENT_ID`
-in the session env, never from a caller-supplied argument, so one agent cannot retune another. This
-mirrors how `office-say` derives its identity. Non-owner Slack senders are already tagged by the
-existing banner mechanism (`slack-ingest.ts:171`), which warns the agent off owner-only actions.
+`office-tune` names its agent from `OFFICE_AGENT_ID` in the session env rather than from a
+user-supplied argument, so an agent stays in its own lane.
+
+**Corrected during implementation:** an earlier draft of this section claimed one agent *cannot*
+retune another. That overstates it. The dashboard token is shared by every agent — exactly as it
+already is for `/api/outbound`, where an agent likewise names itself in the request — so this is a
+convention, not a cryptographic boundary between agents. Making it one means per-agent tokens, which
+is a separate change that would have to cover `office-say` too, and is out of scope here.
+
+Non-owner Slack senders are already tagged by the existing banner mechanism (`slack-ingest.ts:171`),
+which warns the agent off owner-only actions.
 
 ## Out of scope
 
