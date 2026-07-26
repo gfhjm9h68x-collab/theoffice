@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseInbound, prepareInboundDelivery, parseDeri6Signal } from "./slack-ingest.js";
+import { isAllowedSender } from "./access.js";
 
 describe("prepareInboundDelivery (non-owner sender identity + routing safety)", () => {
   // SECURITY: a non-owner allowed contact (e.g. Hanga via allowFrom) must never be mistaken for the owner,
@@ -90,6 +91,42 @@ describe("parseInbound", () => {
 
   it("trims text", () => {
     expect(parseInbound({ ...dm, text: "  spaced  " }, "U_charly")?.text).toBe("spaced");
+  });
+
+  // Channel @-mention support (PR#11 feature port). RED-FIRST: pre-port parseInbound only knew `message`,
+  // so the app_mention accept fails and a non-"im" channel message was wrongly accepted.
+  it("accepts a channel app_mention and strips the bot's own mention from the text", () => {
+    const ev = { type: "app_mention", channel: "C42", user: "U_owner", text: "<@U_charly> what's the weather", ts: "2.2" };
+    expect(parseInbound(ev, "U_charly")).toEqual({ text: "what's the weather", channel: "C42", user: "U_owner", ts: "2.2", files: [] });
+  });
+
+  it("strips a labelled mention and collapses whitespace", () => {
+    const ev = { type: "app_mention", channel: "C42", user: "U_owner", text: "<@U_charly|charly>   ping ", ts: "2.3" };
+    expect(parseInbound(ev, "U_charly")?.text).toBe("ping");
+  });
+
+  it("ignores an app_mention that is only the bot mention (nothing to answer)", () => {
+    expect(parseInbound({ type: "app_mention", channel: "C42", user: "U_owner", text: "<@U_charly>", ts: "2.4" }, "U_charly")).toBeNull();
+  });
+
+  it("ignores a self app_mention (the bot mentioning itself)", () => {
+    expect(parseInbound({ type: "app_mention", channel: "C42", user: "U_charly", text: "<@U_charly> hi", ts: "2.5" }, "U_charly")).toBeNull();
+  });
+
+  it("DM-only: rejects a channel `message` so it can't double-fire alongside its app_mention", () => {
+    const chanMsg = { type: "message", channel_type: "channel", channel: "C42", user: "U_owner", text: "hello all", ts: "2.6" };
+    expect(parseInbound(chanMsg, "U_charly")).toBeNull();
+  });
+
+  it("still accepts a DM whose channel_type is absent (backward-compatible)", () => {
+    const ev = { type: "message", channel: "D9", user: "U_owner", text: "hi", ts: "2.7" };
+    expect(parseInbound(ev, "U_charly")?.channel).toBe("D9");
+  });
+
+  it("FAILS CLOSED: an absent-channel_type message on a CHANNEL id (C...) is rejected, not accepted", () => {
+    // absent channel_type must NOT be treated as a DM unless the id is a D-channel — else a channel post
+    // could slip past the DM-only guard if message.channels scope were ever added.
+    expect(parseInbound({ type: "message", channel: "C999", user: "U_owner", text: "hi", ts: "2.8" }, "U_charly")).toBeNull();
   });
 });
 
@@ -185,5 +222,38 @@ describe("parseDeri6Signal (scoped bot-message exception — deri6 OCR + bill tr
     expect(parseDeri6Signal(signal({ text: "" }), sig)).toBeNull();
     expect(parseDeri6Signal({ type: "message", channel: sig.channelId, bot_id: "B1" }, sig)).toBeNull();
     expect(parseDeri6Signal(null, sig)).toBeNull();
+  });
+});
+
+// SECURITY GATE for the NEW channel input surface: an @-mention lets anyone in a shared channel reach an
+// agent, so the app_mention path MUST pass through the SAME allowed-sender gate as a DM and cannot bypass
+// it. This composes the two real functions EXACTLY as the shared handler does (parseInbound -> isAllowedSender,
+// slack-ingest.ts). RED-FIRST: without the app_mention port, parseInbound returns null for a mention, so an
+// allowed user's @-mention would be dropped (the "accepts owner/allow-listed" case fails) — i.e. the port is
+// required for a mention to reach the gate at all, and the gate then still rejects non-allowed senders.
+describe("app_mention auth gate (new channel surface can't bypass isAllowedSender)", () => {
+  const OWNER = "U_owner";
+  const EXT = "U_ext";
+  const BOT = "U_charly";
+  const mention = (user: string) => ({ type: "app_mention", channel: "C1", user, text: "<@U_charly> do a thing", ts: "9.9" });
+  // mirrors slack-ingest's shared handler: parse, then gate on the SENDER's id.
+  const handlerAccepts = (event: unknown, allowFrom: string[] | undefined) => {
+    const p = parseInbound(event, BOT);
+    return !!p && isAllowedSender(p.user, allowFrom, OWNER);
+  };
+
+  it("REJECTS a non-allowed user's channel @-mention (same drop as a non-allowed DM)", () => {
+    expect(handlerAccepts(mention("U_random"), undefined)).toBe(false); // not owner, no allowFrom
+    expect(handlerAccepts(mention(EXT), [])).toBe(false); // empty allowFrom
+    expect(handlerAccepts(mention("U_random"), [EXT])).toBe(false); // allow-listed someone else, not them
+  });
+
+  it("accepts the owner's and an allow-listed user's @-mention (feature still works for the right people)", () => {
+    expect(handlerAccepts(mention(OWNER), undefined)).toBe(true);
+    expect(handlerAccepts(mention(EXT), [EXT])).toBe(true);
+  });
+
+  it("parseInbound surfaces the MENTIONER as the sender, so the gate checks the real person (not the bot)", () => {
+    expect(parseInbound(mention("U_random"), BOT)?.user).toBe("U_random");
   });
 });
