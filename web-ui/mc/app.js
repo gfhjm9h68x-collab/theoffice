@@ -114,7 +114,7 @@ function setPref(k, v) {
 
 // ---------------- data ----------------
 let AGENTLIST = [], AGENTS = {}, OVERVIEW = {}, USAGE = {}, HOST = {}, SCHEDULES = [];
-let RUNTIMES = [{ id: "claude", label: "Claude Code", models: [] }];
+let RUNTIMES = [{ id: "claude", label: "Claude Code", models: [], efforts: [] }];
 let MAX_CODEX = 2;
 let CURRENT_TAB = "agents";
 const RESTARTING = new Set();      // agent ids in optimistic restart
@@ -300,6 +300,15 @@ function agentCard(a) {
     ? `<select onchange="setModel('${esc(a.id)}', this)">${modelOpts.map((mm) => `<option value="${esc(mm)}"${(a.model || "default") === mm ? " selected" : ""}>${esc(MODEL_LABEL[mm] || mm)}</option>`).join("")}</select>`
     : `<select disabled title="provider-managed model"><option>${esc(MODEL_LABEL[a.model] || a.model || "provider default")}</option></select>`;
 
+  // Providers without an effort knob (codex, gemini) advertise an empty list -> no control at all,
+  // rather than a dropdown that silently does nothing.
+  const efforts = rdef.efforts || [];
+  let effortOpts = ["default", ...efforts];
+  if (a.effort && !effortOpts.includes(a.effort)) effortOpts = [a.effort, ...effortOpts];
+  const effortSel = efforts.length
+    ? `<div class="r"><span class="k">effort</span><select onchange="setEffort('${esc(a.id)}', this)">${effortOpts.map((ee) => `<option value="${esc(ee)}"${(a.effort || "default") === ee ? " selected" : ""}>${esc(ee)}</option>`).join("")}</select></div>`
+    : "";
+
   const canStop = a.running;
   return `<div class="acard${a.enabled ? "" : " disabled"}">
     <div class="ahead">
@@ -319,6 +328,7 @@ function agentCard(a) {
       <div class="r"><span class="k">runtime</span>
         <select onchange="setRuntime('${esc(a.id)}', this)">${RUNTIMES.map((rt) => `<option value="${esc(rt.id)}"${(a.runtime || "claude") === rt.id ? " selected" : ""}>${esc(rt.label)}</option>`).join("")}</select></div>
       <div class="r"><span class="k">model</span>${modelSel}</div>
+      ${effortSel}
     </div>
     <div class="tiles">
       <div class="tile" style="flex:1"><div class="tl">context</div><div class="tv tnum" style="${a.contextPct != null ? (a.contextPct >= 85 ? "color:#dc2626" : a.contextPct >= 70 ? "color:#d97706" : "color:#16a34a") : "color:#16a34a;font-size:13px"}">${a.contextPct != null ? a.contextPct + "%" : "ok"}</div></div>
@@ -526,7 +536,20 @@ window.showTab = showTab;
 window.setMemTier = (v) => { window._memTier = v; showTab("memory"); };
 window.setUsageWin = (w) => { window._usageWin = w; showTab("usage"); };
 
-window.setModel = async (id, sel) => { sel.disabled = true; await post(`/api/agents/${id}/model`, { model: sel.value }); await softRefresh(); };
+// A tune is persisted to agent.json even when it can't be injected into the live pane (agent busy,
+// stopped, or the command was swallowed). Surface that instead of silently implying it took effect.
+window.setModel = async (id, sel) => {
+  sel.disabled = true;
+  const r = await post(`/api/agents/${id}/model`, { model: sel.value });
+  if (r && r.applied === false && r.note) alert(r.note);
+  await softRefresh();
+};
+window.setEffort = async (id, sel) => {
+  sel.disabled = true;
+  const r = await post(`/api/agents/${id}/effort`, { effort: sel.value });
+  if (r && r.applied === false && r.note) alert(r.note);
+  await softRefresh();
+};
 window.setRuntime = async (id, sel) => {
   sel.disabled = true;
   const r = await post(`/api/agents/${id}/runtime`, { runtime: sel.value });

@@ -337,6 +337,7 @@ async function handleApi(
         color: a.color ?? null,
         enabled: a.enabled,
         model: a.model ?? "default",
+        effort: a.effort ?? "default",
         profile: a.profile ?? "full",
         runtime: a.runtime ?? "claude",
         running,
