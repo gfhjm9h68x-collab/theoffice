@@ -113,6 +113,11 @@ function launchClaude(cfg: EngineConfig, agent: AgentDef): boolean {
   const session = sessionNameFor(agent.id);
   const command = ["claude", "--dangerously-skip-permissions"];
   if (agent.model) command.push("--model", agent.model);
+  // Effort is pinned the same way as the model. Both flags override whatever is in the SHARED
+  // ~/.claude/settings.json (all agents run on one HOME, because the credentials live there), which
+  // is exactly why a pinned value survives restarts and can't be knocked over by another agent's
+  // switch — /effort and /model also write themselves into that file as a default.
+  if (agent.effort) command.push("--effort", agent.effort);
   const home = process.env.HOME ?? "";
   const env: Record<string, string> = {
     // ~/.local/bin first so the agent can call `office-say` to reply on Slack
