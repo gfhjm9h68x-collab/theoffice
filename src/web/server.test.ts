@@ -124,3 +124,50 @@ describe("Dashboard Rate Limiting", () => {
     expect(second.retryAfter).toBe("10"); // escalated: 5000 * 2 / 1000
   });
 });
+
+describe("static file serving", () => {
+  let tempDir: string;
+  let cfg: any;
+  let stopServer: () => void;
+  let base: string;
+
+  beforeEach(async () => {
+    tempDir = join(tmpdir(), "theoffice-static-test-" + Math.random().toString(36).slice(2));
+    mkdirSync(join(tempDir, "store"), { recursive: true });
+    writeFileSync(join(tempDir, "store", ".dashboard-token"), MOCK_TOKEN);
+    const port = await freePort();
+    base = `http://127.0.0.1:${port}`;
+    cfg = {
+      web: { host: "127.0.0.1", port },
+      paths: { dashboardTokenFile: join(tempDir, "store", ".dashboard-token") },
+      owner: { timezone: "UTC" },
+      channel: { provider: "none" },
+    };
+    stopServer = startServer(cfg);
+    await new Promise((r) => setTimeout(r, 100));
+  });
+
+  afterEach(() => {
+    if (stopServer) stopServer();
+    if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  // A directory path passes existsSync but is not readable as a file: readFileSync throws EISDIR,
+  // and an unauthenticated GET /mc would take the whole engine down with it.
+  it("404s a directory path instead of crashing (EISDIR)", async () => {
+    const res = await fetch(`${base}/mc`);
+    expect(res.status).toBe(404);
+  });
+
+  it("still serves the directory index when the path ends in a slash", async () => {
+    const res = await fetch(`${base}/mc/`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("<");
+  });
+
+  it("keeps serving after a directory request (the process must survive)", async () => {
+    await fetch(`${base}/mc`).catch(() => undefined);
+    const res = await fetch(`${base}/`);
+    expect(res.status).toBe(200);
+  });
+});

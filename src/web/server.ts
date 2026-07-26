@@ -655,7 +655,11 @@ function serveStatic(res: ServerResponse, path: string): void {
   // prevent path traversal
   const safe = normalize(rel).replace(/^(\.\.[/\\])+/, "");
   const file = join(UI_DIR, safe);
-  if (!file.startsWith(UI_DIR) || !existsSync(file)) {
+  // Must be a FILE, not merely something that exists: a directory (e.g. /mc, the Mission Control dir)
+  // passes existsSync, then readFileSync throws EISDIR out of the request handler — an unauthenticated
+  // GET would take the whole engine down. statSync-as-file collapses "missing" and "not a file" into 404.
+  const st = file.startsWith(UI_DIR) ? statSync(file, { throwIfNoEntry: false }) : undefined;
+  if (!st?.isFile()) {
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("not found");
     return;
