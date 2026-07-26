@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { startServer, _setClock } from "./server.js";
 import { openDb, closeDb } from "../db/index.js";
+import type { EngineConfig } from "../types.js";
 import { join } from "node:path";
 import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -181,7 +182,7 @@ describe("static file serving", () => {
  */
 describe("agent effort/model tuning", () => {
   let tempDir: string;
-  let cfg: any;
+  let cfg: EngineConfig;
   let stopServer: () => void;
   let base: string;
 
@@ -221,7 +222,7 @@ describe("agent effort/model tuning", () => {
       channel: { provider: "none" },
       // no tmux session exists for this agent -> applyTune reports no-session
       tmux: { socket: "theoffice-test-nonexistent" },
-    };
+    } as unknown as EngineConfig;
     stopServer = startServer(cfg);
     await new Promise((r) => setTimeout(r, 100));
   });
