@@ -29,7 +29,18 @@ describe("restoreOwnerSettings", () => {
     const after = JSON.parse(readFileSync(settingsPath(), "utf8"));
     expect(after.effortLevel).toBe("high");
     expect(after.theme).toBe("dark"); // untouched
-    expect(after.model).toBeUndefined(); // canonical has no model -> key removed
+    // An UNSPECIFIED canonical value must leave the owner's own key alone — never delete it. We cannot
+    // know the owner's real preference, so destroying their model default on every tune is the C3 bug.
+    expect(after.model).toBe("claude-sonnet-5");
+  });
+
+  it("leaves the owner's settings entirely untouched when no canonical value is configured", async () => {
+    writeFileSync(settingsPath(), JSON.stringify({ theme: "dark", model: "claude-opus-5", effortLevel: "max" }));
+    await restoreOwnerSettings({ model: undefined, effortLevel: undefined });
+    const after = JSON.parse(readFileSync(settingsPath(), "utf8"));
+    expect(after.model).toBe("claude-opus-5"); // not deleted
+    expect(after.effortLevel).toBe("max"); // not force-rewritten to "high"
+    expect(after.theme).toBe("dark");
   });
 
   it("is a no-op when there is no settings file, instead of creating one", async () => {

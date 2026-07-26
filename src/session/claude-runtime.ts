@@ -4,6 +4,7 @@ import { readEnvFile } from "../env.js";
 import type { EngineConfig, AgentDef } from "../types.js";
 import { log } from "../logger.js";
 import { capturePane, clearInput, hasSession, newSession, sendKey, sendText, sessionNameFor } from "./tmux.js";
+import { withPaneLock } from "./pane-lock.js";
 import { detectPaneState, decideSubmitFollowup } from "./pane-state.js";
 import { writeAgentSettings } from "./profile.js";
 import { ensureFolderTrusted } from "./trust.js";
@@ -175,7 +176,7 @@ async function deliverClaude(cfg: EngineConfig, agent: AgentDef, item: QueuedIte
       logger.warn({ agent: item.agent_id, err }, "memory recall failed (delivering without)");
     }
   }
-  const res = await deliverPrompt(socket, session, text);
+  const res = await withPaneLock(session, () => deliverPrompt(socket, session, text));
   if (res.ok) {
     needsPrime.delete(item.agent_id);
     markDelivered(item.id);

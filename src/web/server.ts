@@ -666,7 +666,10 @@ interface JsonBody {
  * Read from config so it is not hardcoded; falls back to the CLI's own default effort.
  */
 function ownerCanonicalSettings(cfg: EngineConfig): { model?: string; effortLevel?: string } {
-  return { model: cfg.owner.claudeModel, effortLevel: cfg.owner.claudeEffort ?? "high" };
+  // Leave these UNDEFINED when the owner has not configured them: restoreOwnerSettings then leaves the
+  // owner's own settings.json untouched. Defaulting effort to "high" here would silently force-write the
+  // owner's real ~/.claude/settings.json to "high" on every tune, even if they never chose it.
+  return { model: cfg.owner.claudeModel, effortLevel: cfg.owner.claudeEffort };
 }
 
 /**
@@ -702,6 +705,19 @@ async function tuneAgent(
       value = normalizeEffort(trimmed);
       if (!value) return json(res, 400, { error: "unknown effort", effort: trimmed });
     } else {
+      // A model is typed into the LIVE pane as `/model <value>` (applyTune -> tmux send-keys -l). An
+      // interior newline would submit the model line and then inject arbitrary keystrokes/slash-commands
+      // into the agent's conversation, so accept only a bare model token. And when the runtime enumerates
+      // its models, require membership — that both closes the injection surface AND caps cost, so an agent
+      // cannot pin itself (or any agent) to an off-menu / more expensive model. (effort is already an
+      // allowlist above; codex enumerates no models, so it keeps the token-syntax check only.)
+      if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+        return json(res, 400, { error: "invalid model", model: trimmed });
+      }
+      const allowed = runtimeFor(agent).models;
+      if (allowed.length > 0 && !allowed.includes(trimmed)) {
+        return json(res, 400, { error: "unknown model for runtime", model: trimmed, allowed });
+      }
       value = trimmed;
     }
   }

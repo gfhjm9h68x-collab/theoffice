@@ -270,6 +270,23 @@ describe("agent effort/model tuning", () => {
     expect(agentJson().model).toBe("claude-opus-5");
   });
 
+  // C1: the model value is typed into the live pane as `/model <value>`. A value with an interior
+  // newline would submit the model line then inject arbitrary keystrokes/slash-commands. It must be
+  // rejected BEFORE anything is persisted or typed.
+  it("rejects a model with an interior newline (pane-injection) with 400 and does not persist it", async () => {
+    const res = await tune("model", { model: "claude-sonnet-5\n/effort max" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/invalid model/i);
+    expect(agentJson().model).toBe("claude-opus-4-8"); // unchanged from setup — never reached the pane
+  });
+
+  it("rejects an off-menu / non-allowlisted model with 400 and does not persist it", async () => {
+    const res = await tune("model", { model: "claude-opus-1000-ultra-expensive" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/unknown model/i);
+    expect(agentJson().model).toBe("claude-opus-4-8"); // unchanged — cost/allowlist guard held
+  });
+
   it("refuses effort on a non-claude runtime — the knob does not exist there", async () => {
     writeFileSync(
       join(tempDir, "agents", "home", "agent.json"),

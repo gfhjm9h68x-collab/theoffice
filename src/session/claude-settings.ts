@@ -29,12 +29,18 @@ export function restoreOwnerSettings(canonical: CanonicalSettings): Promise<void
       const path = join(process.env.HOME ?? "", ".claude", "settings.json");
       if (!existsSync(path)) return; // nothing to restore; never create the owner a file
       const cur = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      let changed = false;
       for (const key of ["model", "effortLevel"] as const) {
         const want = canonical[key];
-        if (want === undefined) delete cur[key];
-        else cur[key] = want;
+        // Only RE-ASSERT values the owner explicitly configured. An unknown canonical (owner never set
+        // it) means we cannot know their preference, so we leave whatever is there rather than deleting
+        // it — a tune must never destroy the owner's own model/effort default.
+        if (want !== undefined && cur[key] !== want) {
+          cur[key] = want;
+          changed = true;
+        }
       }
-      writeFileSync(path, JSON.stringify(cur, null, 2) + "\n");
+      if (changed) writeFileSync(path, JSON.stringify(cur, null, 2) + "\n");
     } catch (err) {
       logger.warn({ err }, "could not restore owner settings"); // never fail a tune over this
     }

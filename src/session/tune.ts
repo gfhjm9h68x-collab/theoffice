@@ -1,4 +1,5 @@
 import { hasSession, capturePane, sendText, sendKey } from "./tmux.js";
+import { withPaneLock } from "./pane-lock.js";
 import { detectPaneState } from "./pane-state.js";
 import { log } from "../logger.js";
 
@@ -90,27 +91,31 @@ export async function applyTune(
     await sleep(t.readyPollMs);
   }
 
-  const before = capturePane(socket, session) ?? "";
-  sendText(socket, session, `/${kind} ${value}`);
-  await sleep(t.settleMs);
-  sendKey(socket, session, "Enter");
+  // Hold the pane-write lock across the keystroke burst AND the ack read-back, so a queued delivery for
+  // the same agent cannot type into the pane mid-tune (which would corrupt the line and steal our ack).
+  return withPaneLock(session, async () => {
+    const before = capturePane(socket, session) ?? "";
+    sendText(socket, session, `/${kind} ${value}`);
+    await sleep(t.settleMs);
+    sendKey(socket, session, "Enter");
 
-  const ackDeadline = Date.now() + t.ackWaitMs;
-  for (;;) {
-    await sleep(t.ackPollMs);
-    const pane = capturePane(socket, session) ?? "";
-    if (pane !== before) {
-      const ack = matchAck(pane);
-      if (ack) {
-        logger.info({ session, kind, value, ok: ack.ok }, "tune acknowledged");
-        return ack.ok
-          ? { ok: true, message: ack.message }
-          : { ok: false, reason: "rejected", message: ack.message };
+    const ackDeadline = Date.now() + t.ackWaitMs;
+    for (;;) {
+      await sleep(t.ackPollMs);
+      const pane = capturePane(socket, session) ?? "";
+      if (pane !== before) {
+        const ack = matchAck(pane);
+        if (ack) {
+          logger.info({ session, kind, value, ok: ack.ok }, "tune acknowledged");
+          return ack.ok
+            ? { ok: true, message: ack.message }
+            : { ok: false, reason: "rejected", message: ack.message };
+        }
+      }
+      if (Date.now() >= ackDeadline) {
+        logger.warn({ session, kind, value }, "tune not acknowledged — swallowed?");
+        return { ok: false, reason: "no-ack" };
       }
     }
-    if (Date.now() >= ackDeadline) {
-      logger.warn({ session, kind, value }, "tune not acknowledged — swallowed?");
-      return { ok: false, reason: "no-ack" };
-    }
-  }
+  });
 }
