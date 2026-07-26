@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { startServer, _setClock } from "./server.js";
+import { openDb, closeDb } from "../db/index.js";
 import { join } from "node:path";
-import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer as netCreateServer } from "node:net";
 
@@ -169,5 +170,94 @@ describe("static file serving", () => {
     await fetch(`${base}/mc`).catch(() => undefined);
     const res = await fetch(`${base}/`);
     expect(res.status).toBe(200);
+  });
+});
+
+/**
+ * Model/effort pins are written to agent.json FIRST and only then applied to the live pane, so a
+ * pin is never lost just because the injection could not happen. These tests run with no tmux
+ * session at all, which is exactly that case: applyTune reports no-session, and agent.json must
+ * still be correct.
+ */
+describe("agent effort/model tuning", () => {
+  let tempDir: string;
+  let cfg: any;
+  let stopServer: () => void;
+  let base: string;
+
+  const agentJson = () =>
+    JSON.parse(readFileSync(join(tempDir, "agents", "home", "agent.json"), "utf8"));
+
+  const tune = (action: string, body: unknown) =>
+    fetch(`${base}/api/agents/home/${action}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${MOCK_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  beforeEach(async () => {
+    tempDir = join(tmpdir(), "theoffice-tune-" + Math.random().toString(36).slice(2));
+    mkdirSync(join(tempDir, "store"), { recursive: true });
+    mkdirSync(join(tempDir, "agents", "home"), { recursive: true });
+    mkdirSync(join(tempDir, "secrets", "slack"), { recursive: true });
+    writeFileSync(join(tempDir, "store", ".dashboard-token"), MOCK_TOKEN);
+    // handleApi opens with getDb() on every request, so an authenticated route needs a live db
+    openDb(join(tempDir, "store", "test.db"));
+    writeFileSync(
+      join(tempDir, "agents", "home", "agent.json"),
+      JSON.stringify({ displayName: "Home", model: "claude-opus-4-8" }),
+    );
+    const port = await freePort();
+    base = `http://127.0.0.1:${port}`;
+    cfg = {
+      web: { host: "127.0.0.1", port, rateLimit: { maxFails: 50, windowMs: 1000, blockMs: 1000 } },
+      paths: {
+        dashboardTokenFile: join(tempDir, "store", ".dashboard-token"),
+        agentsDir: join(tempDir, "agents"),
+        secretsDir: join(tempDir, "secrets"),
+        tenantRoot: tempDir,
+      },
+      owner: { timezone: "UTC" },
+      channel: { provider: "none" },
+      // no tmux session exists for this agent -> applyTune reports no-session
+      tmux: { socket: "theoffice-test-nonexistent" },
+    };
+    stopServer = startServer(cfg);
+    await new Promise((r) => setTimeout(r, 100));
+  });
+
+  afterEach(() => {
+    if (stopServer) stopServer();
+    closeDb();
+    if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("rejects an unknown effort level with 400 and does not touch agent.json", async () => {
+    const res = await tune("effort", { effort: "banana" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/unknown effort/i);
+    expect(agentJson().effort).toBeUndefined();
+  });
+
+  it("persists a valid effort even when the live pane cannot be tuned", async () => {
+    const res = await tune("effort", { effort: "xhigh" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.effort).toBe("xhigh");
+    expect(body.applied).toBe(false); // no session -> not live, but…
+    expect(agentJson().effort).toBe("xhigh"); // …durable truth is written regardless
+  });
+
+  it('clears the pin when given "default"', async () => {
+    await tune("effort", { effort: "xhigh" });
+    const res = await tune("effort", { effort: "default" });
+    expect(res.status).toBe(200);
+    expect(agentJson().effort).toBeUndefined();
+  });
+
+  it("a model change no longer kills the session — agent.json is written and the pin persists", async () => {
+    const res = await tune("model", { model: "claude-opus-5" });
+    expect(res.status).toBe(200);
+    expect(agentJson().model).toBe("claude-opus-5");
   });
 });

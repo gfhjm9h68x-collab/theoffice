@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, openSyn
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import type { EngineConfig, MemoryTier } from "../types.js";
+import type { AgentDef, EngineConfig, MemoryTier } from "../types.js";
 import { getDb } from "../db/index.js";
 import { loadAgents } from "../agents.js";
 import { loadScheduledTasks } from "../scheduler/index.js";
@@ -20,6 +20,9 @@ import { sessionNameFor, launchAgent } from "../session/session-manager.js";
 import { hasSession, capturePane, killSession } from "../session/tmux.js";
 import { detectPaneState } from "../session/pane-state.js";
 import { isCodexBusy } from "../session/codex-runtime.js";
+import { applyTune, type TuneKind } from "../session/tune.js";
+import { restoreOwnerSettings } from "../session/claude-settings.js";
+import { normalizeEffort } from "../session/effort.js";
 
 // Live context fill % from the agent's most-recent Claude Code session transcript — reads the
 // last turn's token usage (input + cache) against the context window. Token-free (no /context
@@ -519,7 +522,7 @@ async function handleApi(
   }
 
   // --- agent control (write) : /api/agents/<id>/<action> ---
-  const am = path.match(/^\/api\/agents\/([A-Za-z0-9_-]+)\/(model|runtime|enabled|restart|start|stop|cleanreset)$/);
+  const am = path.match(/^\/api\/agents\/([A-Za-z0-9_-]+)\/(model|effort|runtime|enabled|restart|start|stop|cleanreset)$/);
   if (am && m === "POST") {
     const id = am[1]!, action = am[2]!;
     const agent = loadAgents(cfg).find((a) => a.id === id);
@@ -559,14 +562,12 @@ async function handleApi(
     const meta = existsSync(metaPath) ? (parseJson(readFileSync(metaPath, "utf8")) ?? {}) : {};
     const raw = await readBody(req, res); if (raw === null) return;
     const body = parseJson(raw) ?? {};
-    if (action === "model") {
-      const mv = typeof body.model === "string" ? body.model : "default";
-      if (mv && mv !== "default") meta.model = mv;
-      else delete meta.model;
-      writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-      killSession(cfg.tmux.socket, session); // restart so the new --model takes effect
-      relaunch();
-      return json(res, 200, { ok: true, model: mv });
+    // model / effort: persist to agent.json FIRST (durable truth, survives restart), then tune the
+    // LIVE pane so the agent keeps its conversation. Deliberately no killSession here — that was the
+    // old behaviour and it threw away the agent's context on every model change.
+    if (action === "model" || action === "effort") {
+      const rawVal = action === "model" ? body.model : body.effort;
+      return tuneAgent(cfg, res, agent, action, typeof rawVal === "string" ? rawVal : "default");
     }
     if (action === "runtime") {
       // Flip the provider that drives this agent (claude / codex / ...). Optional `model` in the same
@@ -641,6 +642,70 @@ async function handleApi(
 interface JsonBody {
   [k: string]: any;
 }
+/**
+ * The owner's own default Claude settings, which a tune injection would otherwise overwrite.
+ * Read from config so it is not hardcoded; falls back to the CLI's own default effort.
+ */
+function ownerCanonicalSettings(cfg: EngineConfig): { model?: string; effortLevel?: string } {
+  return { model: cfg.owner.claudeModel, effortLevel: cfg.owner.claudeEffort ?? "high" };
+}
+
+/**
+ * Persist a model/effort pin to agent.json, then apply it to the live pane.
+ *
+ * Shared by the dashboard action and by office-tune, so both paths have identical semantics:
+ * agent.json is the durable truth and is written even when the live injection cannot happen — a
+ * failed injection therefore means "takes effect at next restart", not "lost".
+ */
+async function tuneAgent(
+  cfg: EngineConfig,
+  res: ServerResponse,
+  agent: AgentDef,
+  kind: TuneKind,
+  wanted: string,
+): Promise<void> {
+  const metaPath = join(agent.dir, "agent.json");
+  const meta = existsSync(metaPath) ? (parseJson(readFileSync(metaPath, "utf8")) ?? {}) : {};
+  const trimmed = wanted.trim();
+  const clearing = !trimmed || trimmed === "default";
+
+  let value: string | undefined;
+  if (!clearing) {
+    if (kind === "effort") {
+      value = normalizeEffort(trimmed);
+      if (!value) return json(res, 400, { error: "unknown effort", effort: trimmed });
+    } else {
+      value = trimmed;
+    }
+  }
+
+  if (clearing) delete meta[kind];
+  else meta[kind] = value;
+  writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+
+  // Clearing a pin has no live equivalent (there is no "unset" slash command), so it takes effect at
+  // the next launch — say so rather than pretending it applied now.
+  if (clearing) {
+    return json(res, 200, {
+      ok: true,
+      [kind]: "default",
+      applied: false,
+      note: "cleared; applies at next restart",
+    });
+  }
+
+  const tuned = await applyTune(cfg.tmux.socket, sessionNameFor(agent.id), kind, value!);
+  if (tuned.ok) await restoreOwnerSettings(ownerCanonicalSettings(cfg));
+  return json(res, 200, {
+    ok: true,
+    [kind]: value,
+    applied: tuned.ok,
+    note: tuned.ok
+      ? tuned.message
+      : `saved; not applied live (${tuned.reason}) — takes effect at next restart`,
+  });
+}
+
 function parseJson(s: string): JsonBody | null {
   try {
     return JSON.parse(s);

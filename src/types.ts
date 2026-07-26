@@ -127,6 +127,15 @@ export interface OwnerConfig {
   slackUserId?: string;
   locale: string;
   timezone: string;
+  /**
+   * The owner's OWN interactive Claude CLI defaults. Agents share ~/.claude/settings.json with the
+   * owner (one HOME), and /model + /effort save themselves into it, so after tuning an agent the
+   * engine restores these values — otherwise the owner's next `claude` would silently start on
+   * whatever an agent was last switched to. Agents themselves are unaffected either way: they launch
+   * with explicit --model/--effort flags, which override the file.
+   */
+  claudeModel?: string;
+  claudeEffort?: string;
 }
 
 export interface ChannelConfig {
