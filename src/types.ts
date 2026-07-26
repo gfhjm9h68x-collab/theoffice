@@ -15,6 +15,12 @@ export interface AgentDef {
   /** absolute path to this agent's working dir (where its `claude` runs) */
   dir: string;
   model?: string;
+  /**
+   * Claude "thinking effort" for this agent (low | medium | high | xhigh | max), passed as --effort at
+   * launch. Claude runtime only; ignored by codex/gemini. Unset = whatever the CLI defaults to.
+   * An unknown value normalizes away to unset (see session/effort.ts) so a typo can't block a launch.
+   */
+  effort?: string;
   enabled: boolean;
   /**
    * This agent's OWN Slack identity — a distinct bot the owner can DM directly
@@ -121,6 +127,15 @@ export interface OwnerConfig {
   slackUserId?: string;
   locale: string;
   timezone: string;
+  /**
+   * The owner's OWN interactive Claude CLI defaults. Agents share ~/.claude/settings.json with the
+   * owner (one HOME), and /model + /effort save themselves into it, so after tuning an agent the
+   * engine restores these values — otherwise the owner's next `claude` would silently start on
+   * whatever an agent was last switched to. Agents themselves are unaffected either way: they launch
+   * with explicit --model/--effort flags, which override the file.
+   */
+  claudeModel?: string;
+  claudeEffort?: string;
 }
 
 export interface ChannelConfig {

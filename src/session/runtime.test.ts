@@ -51,6 +51,39 @@ describe("runtime registry", () => {
     expect(getRuntime("codex").models.length).toBe(0);
   });
 
+  it("advertises the current claude models, aliases not dated snapshots", () => {
+    const models = getRuntime("claude").models;
+    expect(models).toContain("claude-opus-5");
+    expect(models).toContain("claude-fable-5");
+    expect(models).toContain("claude-sonnet-5");
+    // opus 4.8 stays: live agents (home, zeus) still run on it
+    expect(models).toContain("claude-opus-4-8");
+    // the dated snapshot id must not come back — offer the alias
+    expect(models).toContain("claude-haiku-4-5");
+    expect(models).not.toContain("claude-haiku-4-5-20251001");
+  });
+
+  it("advertises gemini models as agy slugs, never human labels", () => {
+    const models = getRuntime("gemini").models;
+    expect(models.length).toBeGreaterThan(0);
+    // this is the bug class that got in: "Gemini 3.1 Pro (High)" instead of gemini-3.1-pro-high
+    for (const m of models) expect(m).toMatch(/^[a-z0-9.-]+$/);
+    expect(models).toContain("gemini-3.6-flash-high");
+    expect(models).toContain("gemini-3.1-pro-high");
+  });
+
+  it("advertises effort levels for claude only", () => {
+    expect([...getRuntime("claude").efforts]).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    // non-claude providers have no equivalent knob; the UI hides the control when the list is empty
+    expect(getRuntime("codex").efforts.length).toBe(0);
+    expect(getRuntime("gemini").efforts.length).toBe(0);
+  });
+
+  it("exposes efforts through listRuntimes for the dashboard", () => {
+    const claude = listRuntimes().find((r) => r.id === "claude")!;
+    expect(claude.efforts).toContain("xhigh");
+  });
+
   it("claude readiness is decided live (isBusy always false), not via a tracked flag", () => {
     expect(getRuntime("claude").isBusy("x")).toBe(false);
   });

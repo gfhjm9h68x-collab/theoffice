@@ -218,6 +218,7 @@ export const codexRuntime: Runtime = {
   label: "OpenAI Codex (GPT-5.5)",
   // Codex uses the signed-in ChatGPT account's model, not a per-launch flag, so no selectable list.
   models: [],
+  efforts: [],
   launch: launchCodexHolder,
   isBusy: isCodexBusy,
   deliver: deliverCodexPrompt,

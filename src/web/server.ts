@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, openSyn
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
-import type { EngineConfig, MemoryTier } from "../types.js";
+import type { AgentDef, EngineConfig, MemoryTier } from "../types.js";
 import { getDb } from "../db/index.js";
 import { loadAgents } from "../agents.js";
 import { loadScheduledTasks } from "../scheduler/index.js";
@@ -20,6 +20,9 @@ import { sessionNameFor, launchAgent } from "../session/session-manager.js";
 import { hasSession, capturePane, killSession } from "../session/tmux.js";
 import { detectPaneState } from "../session/pane-state.js";
 import { isCodexBusy } from "../session/codex-runtime.js";
+import { applyTune, type TuneKind } from "../session/tune.js";
+import { restoreOwnerSettings } from "../session/claude-settings.js";
+import { normalizeEffort } from "../session/effort.js";
 
 // Live context fill % from the agent's most-recent Claude Code session transcript — reads the
 // last turn's token usage (input + cache) against the context window. Token-free (no /context
@@ -68,7 +71,7 @@ function contextPctFromTranscript(agentDir: string): number | null {
     return null;
   }
 }
-import { isKnownRuntime, listRuntimes, DEFAULT_RUNTIME } from "../session/runtime.js";
+import { isKnownRuntime, listRuntimes, runtimeFor, DEFAULT_RUNTIME } from "../session/runtime.js";
 import { getOrCreateToken, checkBearer } from "./auth.js";
 import { log } from "../logger.js";
 
@@ -334,6 +337,7 @@ async function handleApi(
         color: a.color ?? null,
         enabled: a.enabled,
         model: a.model ?? "default",
+        effort: a.effort ?? "default",
         profile: a.profile ?? "full",
         runtime: a.runtime ?? "claude",
         running,
@@ -511,6 +515,24 @@ async function handleApi(
     return json(res, 200, { id });
   }
 
+  // POST /api/tune {kind, value} — office-tune's endpoint, so an agent can honour a plain-language
+  // request from the owner ("switch to xhigh") without the owner learning a command syntax.
+  //
+  // The agent names itself in X-Office-Agent, from OFFICE_AGENT_ID in its session env. Same trust
+  // model as /api/outbound above: the dashboard token is shared by every agent, so this keeps agents
+  // in their own lane by convention — it is NOT a cryptographic boundary between them. Tightening
+  // that would mean per-agent tokens, which is a separate change affecting office-say too.
+  if (path === "/api/tune" && m === "POST") {
+    const raw = await readBody(req, res); if (raw === null) return;
+    const body = parseJson(raw) ?? {};
+    const who = String(req.headers["x-office-agent"] ?? "");
+    const agent = loadAgents(cfg).find((a) => a.id === who);
+    if (!agent) return json(res, 400, { error: "unknown calling agent", agent: who });
+    const kind = body.kind === "model" || body.kind === "effort" ? (body.kind as TuneKind) : null;
+    if (!kind) return json(res, 400, { error: "kind must be model or effort" });
+    return tuneAgent(cfg, res, agent, kind, String(body.value ?? ""));
+  }
+
   // GET /api/queue — inbound queue snapshot
   if (path === "/api/queue" && m === "GET") {
     const rows = db.prepare(`SELECT status, COUNT(*) n FROM inbound_queue GROUP BY status`).all() as { status: string; n: number }[];
@@ -519,7 +541,7 @@ async function handleApi(
   }
 
   // --- agent control (write) : /api/agents/<id>/<action> ---
-  const am = path.match(/^\/api\/agents\/([A-Za-z0-9_-]+)\/(model|runtime|enabled|restart|start|stop|cleanreset)$/);
+  const am = path.match(/^\/api\/agents\/([A-Za-z0-9_-]+)\/(model|effort|runtime|enabled|restart|start|stop|cleanreset)$/);
   if (am && m === "POST") {
     const id = am[1]!, action = am[2]!;
     const agent = loadAgents(cfg).find((a) => a.id === id);
@@ -559,14 +581,12 @@ async function handleApi(
     const meta = existsSync(metaPath) ? (parseJson(readFileSync(metaPath, "utf8")) ?? {}) : {};
     const raw = await readBody(req, res); if (raw === null) return;
     const body = parseJson(raw) ?? {};
-    if (action === "model") {
-      const mv = typeof body.model === "string" ? body.model : "default";
-      if (mv && mv !== "default") meta.model = mv;
-      else delete meta.model;
-      writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-      killSession(cfg.tmux.socket, session); // restart so the new --model takes effect
-      relaunch();
-      return json(res, 200, { ok: true, model: mv });
+    // model / effort: persist to agent.json FIRST (durable truth, survives restart), then tune the
+    // LIVE pane so the agent keeps its conversation. Deliberately no killSession here — that was the
+    // old behaviour and it threw away the agent's context on every model change.
+    if (action === "model" || action === "effort") {
+      const rawVal = action === "model" ? body.model : body.effort;
+      return tuneAgent(cfg, res, agent, action, typeof rawVal === "string" ? rawVal : "default");
     }
     if (action === "runtime") {
       // Flip the provider that drives this agent (claude / codex / ...). Optional `model` in the same
@@ -641,6 +661,108 @@ async function handleApi(
 interface JsonBody {
   [k: string]: any;
 }
+/**
+ * The owner's own default Claude settings, which a tune injection would otherwise overwrite.
+ * Read from config so it is not hardcoded; falls back to the CLI's own default effort.
+ */
+function ownerCanonicalSettings(cfg: EngineConfig): { model?: string; effortLevel?: string } {
+  // Leave these UNDEFINED when the owner has not configured them: restoreOwnerSettings then leaves the
+  // owner's own settings.json untouched. Defaulting effort to "high" here would silently force-write the
+  // owner's real ~/.claude/settings.json to "high" on every tune, even if they never chose it.
+  return { model: cfg.owner.claudeModel, effortLevel: cfg.owner.claudeEffort };
+}
+
+/**
+ * Persist a model/effort pin to agent.json, then apply it to the live pane.
+ *
+ * Shared by the dashboard action and by office-tune, so both paths have identical semantics:
+ * agent.json is the durable truth and is written even when the live injection cannot happen — a
+ * failed injection therefore means "takes effect at next restart", not "lost".
+ */
+async function tuneAgent(
+  cfg: EngineConfig,
+  res: ServerResponse,
+  agent: AgentDef,
+  kind: TuneKind,
+  wanted: string,
+): Promise<void> {
+  const metaPath = join(agent.dir, "agent.json");
+  const meta = existsSync(metaPath) ? (parseJson(readFileSync(metaPath, "utf8")) ?? {}) : {};
+  const trimmed = wanted.trim();
+  const clearing = !trimmed || trimmed === "default";
+
+  // Live injection is a CLAUDE-runtime mechanism: /model and /effort are Claude Code slash commands.
+  // A codex or gemini pane would just receive that text as a prompt, so those providers keep the old
+  // restart-to-apply path, and effort — which they don't have at all — is refused outright.
+  const isClaude = runtimeFor(agent).id === "claude";
+  if (!isClaude && kind === "effort") {
+    return json(res, 400, { error: "effort is claude-only", runtime: runtimeFor(agent).id });
+  }
+
+  let value: string | undefined;
+  if (!clearing) {
+    if (kind === "effort") {
+      value = normalizeEffort(trimmed);
+      if (!value) return json(res, 400, { error: "unknown effort", effort: trimmed });
+    } else {
+      // A model is typed into the LIVE pane as `/model <value>` (applyTune -> tmux send-keys -l). An
+      // interior newline would submit the model line and then inject arbitrary keystrokes/slash-commands
+      // into the agent's conversation, so accept only a bare model token. And when the runtime enumerates
+      // its models, require membership — that both closes the injection surface AND caps cost, so an agent
+      // cannot pin itself (or any agent) to an off-menu / more expensive model. (effort is already an
+      // allowlist above; codex enumerates no models, so it keeps the token-syntax check only.)
+      if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+        return json(res, 400, { error: "invalid model", model: trimmed });
+      }
+      const allowed = runtimeFor(agent).models;
+      if (allowed.length > 0 && !allowed.includes(trimmed)) {
+        return json(res, 400, { error: "unknown model for runtime", model: trimmed, allowed });
+      }
+      value = trimmed;
+    }
+  }
+
+  if (clearing) delete meta[kind];
+  else meta[kind] = value;
+  writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+
+  // Clearing a pin has no live equivalent (there is no "unset" slash command), so it takes effect at
+  // the next launch — say so rather than pretending it applied now.
+  if (clearing) {
+    return json(res, 200, {
+      ok: true,
+      [kind]: "default",
+      applied: false,
+      note: "cleared; applies at next restart",
+    });
+  }
+
+  // non-claude providers: no slash-command channel, so restart the session to pick the value up
+  if (!isClaude) {
+    const session = sessionNameFor(agent.id);
+    killSession(cfg.tmux.socket, session);
+    const fresh = loadAgents(cfg).find((a) => a.id === agent.id);
+    if (fresh) launchAgent(cfg, fresh);
+    return json(res, 200, {
+      ok: true,
+      [kind]: value,
+      applied: true,
+      note: `restarted ${agent.id} to apply (this provider has no live-switch path)`,
+    });
+  }
+
+  const tuned = await applyTune(cfg.tmux.socket, sessionNameFor(agent.id), kind, value!);
+  if (tuned.ok) await restoreOwnerSettings(ownerCanonicalSettings(cfg));
+  return json(res, 200, {
+    ok: true,
+    [kind]: value,
+    applied: tuned.ok,
+    note: tuned.ok
+      ? tuned.message
+      : `saved; not applied live (${tuned.reason}) — takes effect at next restart`,
+  });
+}
+
 function parseJson(s: string): JsonBody | null {
   try {
     return JSON.parse(s);

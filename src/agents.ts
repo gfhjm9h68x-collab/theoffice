@@ -3,12 +3,14 @@ import { join } from "node:path";
 import type { AgentDef, EngineConfig } from "./types.js";
 import { log } from "./logger.js";
 import { DEFAULT_RUNTIME, isKnownRuntime } from "./session/runtime.js";
+import { normalizeEffort } from "./session/effort.js";
 
 const logger = log("agents");
 
 interface AgentMeta {
   displayName?: string;
   model?: string;
+  effort?: string;
   enabled?: boolean;
   slack?: { botUserId?: string };
   allowFrom?: string[];
@@ -45,6 +47,8 @@ export function loadAgents(cfg: EngineConfig): AgentDef[] {
       displayName: meta.displayName ?? id,
       dir: join(dir, id),
       model: meta.model,
+      // normalize like `runtime`: an unknown effort resolves to unset rather than reaching the CLI
+      effort: normalizeEffort(meta.effort),
       enabled: meta.enabled !== false,
       slack: secret
         ? {
