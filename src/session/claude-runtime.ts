@@ -189,8 +189,16 @@ async function deliverClaude(cfg: EngineConfig, agent: AgentDef, item: QueuedIte
 export const claudeRuntime: Runtime = {
   id: "claude",
   label: "Claude (Claude Code)",
-  // Selectable --model ids. NB: Fable 5 / Mythos 5 are intentionally omitted (currently access-restricted).
-  models: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+  // Selectable --model ids, verified live against this account's /model menu (2026-07-26).
+  // Opus 4.8 is no longer listed in that menu but stays here: `home` and `zeus` run on it and the
+  // menu itself notes that previous model names remain usable via --model, which is how we launch.
+  models: [
+    "claude-opus-5",
+    "claude-fable-5",
+    "claude-sonnet-5",
+    "claude-opus-4-8",
+    "claude-haiku-4-5",
+  ],
   launch: launchClaude,
   // Readiness for a persistent TUI is decided live inside deliver() via pane state, not a tracked flag.
   isBusy: () => false,

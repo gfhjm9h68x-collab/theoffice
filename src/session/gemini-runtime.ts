@@ -205,14 +205,23 @@ export function deliverGeminiPrompt(cfg: EngineConfig, agent: AgentDef, item: Qu
 export const geminiRuntime: Runtime = {
   id: "gemini",
   label: "Google Antigravity (Gemini)",
-  // Selectable `--model` values, exactly as `agy models` advertises them for a Google AI Pro account
-  // (verified live 2026-06-15). Empty agent.model -> the provider/account default (Gemini 3.5 Flash).
+  // Selectable `--model` values, exactly as `agy models` advertises them (verified live 2026-07-26).
+  // These are SLUGS. An earlier revision carried human labels ("Gemini 3.1 Pro (High)"), which `agy`
+  // does not recognise — it silently falls back to the account default, so the setting looked applied
+  // but was not. The runtime.test.ts slug guard exists to stop that regressing.
+  // Empty agent.model -> the provider/account default.
   models: [
-    "Gemini 3.5 Flash (Low)",
-    "Gemini 3.5 Flash (Medium)",
-    "Gemini 3.5 Flash (High)",
-    "Gemini 3.1 Pro (Low)",
-    "Gemini 3.1 Pro (High)",
+    "gemini-3.6-flash-high",
+    "gemini-3.6-flash-medium",
+    "gemini-3.6-flash-low",
+    "gemini-3.5-flash-high",
+    "gemini-3.5-flash-medium",
+    "gemini-3.5-flash-low",
+    "gemini-3.1-pro-high",
+    "gemini-3.1-pro-low",
+    "claude-sonnet-4-6",
+    "claude-opus-4-6-thinking",
+    "gpt-oss-120b-medium",
   ],
   launch: launchGeminiHolder,
   isBusy: isGeminiBusy,
