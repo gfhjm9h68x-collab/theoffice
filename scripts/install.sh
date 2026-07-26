@@ -81,9 +81,10 @@ if [ -f package-lock.json ]; then npm ci --include=dev --no-audit --no-fund; els
 say "Building (tsc -> dist/)"
 npm run build
 
-say "Installing the office-say reply helper -> ~/.local/bin/office-say"
+say "Installing the office-say / office-tune helpers -> ~/.local/bin/"
 mkdir -p "$HOME/.local/bin"
 install -m 0755 "$INSTALL_DIR/scripts/office-say.sh" "$HOME/.local/bin/office-say"
+install -m 0755 "$INSTALL_DIR/scripts/office-tune.sh" "$HOME/.local/bin/office-tune"
 
 # ---- 3. tenant skeleton -----------------------------------------------------
 say "Preparing tenant root: $TENANT_ROOT"

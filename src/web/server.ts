@@ -515,6 +515,24 @@ async function handleApi(
     return json(res, 200, { id });
   }
 
+  // POST /api/tune {kind, value} — office-tune's endpoint, so an agent can honour a plain-language
+  // request from the owner ("switch to xhigh") without the owner learning a command syntax.
+  //
+  // The agent names itself in X-Office-Agent, from OFFICE_AGENT_ID in its session env. Same trust
+  // model as /api/outbound above: the dashboard token is shared by every agent, so this keeps agents
+  // in their own lane by convention — it is NOT a cryptographic boundary between them. Tightening
+  // that would mean per-agent tokens, which is a separate change affecting office-say too.
+  if (path === "/api/tune" && m === "POST") {
+    const raw = await readBody(req, res); if (raw === null) return;
+    const body = parseJson(raw) ?? {};
+    const who = String(req.headers["x-office-agent"] ?? "");
+    const agent = loadAgents(cfg).find((a) => a.id === who);
+    if (!agent) return json(res, 400, { error: "unknown calling agent", agent: who });
+    const kind = body.kind === "model" || body.kind === "effort" ? (body.kind as TuneKind) : null;
+    if (!kind) return json(res, 400, { error: "kind must be model or effort" });
+    return tuneAgent(cfg, res, agent, kind, String(body.value ?? ""));
+  }
+
   // GET /api/queue — inbound queue snapshot
   if (path === "/api/queue" && m === "GET") {
     const rows = db.prepare(`SELECT status, COUNT(*) n FROM inbound_queue GROUP BY status`).all() as { status: string; n: number }[];
