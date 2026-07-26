@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { startServer, _setClock } from "./server.js";
 import { openDb, closeDb } from "../db/index.js";
 import type { EngineConfig } from "../types.js";
+import { spawnSync } from "node:child_process";
+
+/** Throwaway tmux socket for the tuning tests; torn down in afterEach so runs can't poison each other. */
+const TEST_TMUX_SOCKET = "theoffice-vitest";
 import { join } from "node:path";
 import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -220,8 +224,8 @@ describe("agent effort/model tuning", () => {
       },
       owner: { timezone: "UTC" },
       channel: { provider: "none" },
-      // no tmux session exists for this agent -> applyTune reports no-session
-      tmux: { socket: "theoffice-test-nonexistent" },
+      // dedicated throwaway socket: no session exists here, so applyTune reports no-session
+      tmux: { socket: TEST_TMUX_SOCKET },
     } as unknown as EngineConfig;
     stopServer = startServer(cfg);
     await new Promise((r) => setTimeout(r, 100));
@@ -230,6 +234,10 @@ describe("agent effort/model tuning", () => {
   afterEach(() => {
     if (stopServer) stopServer();
     closeDb();
+    // The non-claude restart path calls launchAgent for real, which CREATES a session on this
+    // socket. Left behind, the next run's hasSession() returns true and applyTune waits on a pane
+    // that never goes idle — a self-inflicted 5s timeout. Kill the whole test tmux server.
+    spawnSync("tmux", ["-L", TEST_TMUX_SOCKET, "kill-server"], { stdio: "ignore" });
     if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
   });
 
