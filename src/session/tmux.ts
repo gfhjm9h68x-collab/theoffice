@@ -1,4 +1,17 @@
 import { spawnSync } from "node:child_process";
+import { log } from "../logger.js";
+
+const logger = log("session");
+
+// Hard ceiling on any single tmux invocation. A tmux subcommand (has-session, capture-pane, send-keys,
+// new-session -d) normally returns in well under 100ms. But tmux() is spawnSync — SYNCHRONOUS — so a call
+// that HANGS (wedged pane whose process is in D-state, an unresponsive tmux server under memory pressure,
+// etc.) blocks the entire Node event loop for as long as it hangs, freezing the scheduler, the deliverer,
+// session relaunch, AND the Slack keepalive with it. That is exactly the 2026-07-28 incident: one tmux call
+// hung ~2h and every timer stopped until it returned. Bounding the call caps the worst-case loop stall: a
+// timed-out call is SIGKILLed and returns code -1, which callers already treat as "not ready / no session"
+// and retry on the next tick — degraded, not frozen.
+const TMUX_TIMEOUT_MS = 10_000;
 
 /**
  * Thin wrapper over `tmux -L <socket> ...`. Every call is pinned to a dedicated
@@ -13,7 +26,16 @@ import { spawnSync } from "node:child_process";
  */
 
 function tmux(socket: string, args: string[]): { code: number; stdout: string; stderr: string } {
-  const r = spawnSync("tmux", ["-L", socket, ...args], { encoding: "utf8" });
+  const r = spawnSync("tmux", ["-L", socket, ...args], {
+    encoding: "utf8",
+    timeout: TMUX_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+  });
+  // spawnSync sets `error` (ETIMEDOUT) and leaves status null when the timeout fires. Surface it so a
+  // wedged tmux is VISIBLE next time instead of a silent multi-hour freeze; callers see code -1 and retry.
+  if (r.error && (r.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+    logger.warn({ socket, cmd: args[0], timeoutMs: TMUX_TIMEOUT_MS }, "tmux call timed out — killed, treated as failure");
+  }
   return { code: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
