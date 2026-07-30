@@ -5,6 +5,7 @@ import {
   shouldNotify,
   renderOffer,
   hashNotice,
+  selectDeliveries,
 } from "./setup-notices.js";
 
 const MANIFEST = `---
@@ -95,5 +96,19 @@ describe("hashNotice", () => {
   it("is stable and content-sensitive", () => {
     expect(hashNotice("a")).toBe(hashNotice("a"));
     expect(hashNotice("a")).not.toBe(hashNotice("b"));
+  });
+});
+
+describe("selectDeliveries — fires exactly once across the pending set", () => {
+  const p = (cap: string, h: string) => ({ capability: cap, noticeHash: h, noticeText: "x", installCmd: "tools/" + cap + "/install.sh" });
+  it("offers only capabilities not already notified at their hash; generic across caps", () => {
+    const pending = [p("watchd", "h1"), p("backupd", "h2")];
+    const markers = { watchd: { notice_hash: "h1", state: "notified" as const, at: 1 } };
+    const sel = selectDeliveries(pending, markers);
+    expect(sel.map((x) => x.capability)).toEqual(["backupd"]); // watchd already offered at h1
+  });
+  it("offers all when there are no markers (first update)", () => {
+    const sel = selectDeliveries([p("watchd", "h1"), p("backupd", "h2")], {});
+    expect(sel.map((x) => x.capability).sort()).toEqual(["backupd", "watchd"]);
   });
 });

@@ -4,7 +4,7 @@ export type MemoryTier = "hot" | "warm" | "cold" | "shared";
 export type KanbanStatus = "planned" | "in_progress" | "waiting" | "done";
 export type Priority = "low" | "normal" | "high" | "urgent";
 export type MessageStatus = "pending" | "delivered" | "done" | "failed";
-export type QueueSource = "channel" | "scheduler" | "bus" | "manual";
+export type QueueSource = "channel" | "scheduler" | "bus" | "manual" | "system";
 export type QueueStatus = "queued" | "delivering" | "delivered" | "failed";
 export type ScheduledTaskType = "task" | "heartbeat";
 
