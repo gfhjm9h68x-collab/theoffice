@@ -53,9 +53,17 @@ export function capturePane(socket: string, name: string, opts: CaptureOpts = {}
   return r.code === 0 ? r.stdout : null;
 }
 
-/** Send literal text (no key interpretation). */
-export function sendText(socket: string, name: string, text: string): void {
-  tmux(socket, ["send-keys", "-t", name, "-l", text]);
+/**
+ * Send literal text (no key interpretation). Returns false if tmux rejected the burst.
+ *
+ * The return value is NOT decorative: a prompt is typed as a sequence of these bursts, and a burst
+ * that fails leaves a hole in the middle of the text with no other symptom. On 2026-07-30 exactly
+ * one 180-char burst vanished from an agent's status report; the two fragments were concatenated,
+ * two open items silently disappeared, and nothing anywhere logged a problem. Callers must check
+ * this and either retry or fail loudly — never deliver a prompt with a hole in it.
+ */
+export function sendText(socket: string, name: string, text: string): boolean {
+  return tmux(socket, ["send-keys", "-t", name, "-l", text]).code === 0;
 }
 
 /** Send a named key / chord, e.g. "Enter", "C-u", "Escape". */

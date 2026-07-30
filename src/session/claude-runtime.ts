@@ -25,6 +25,8 @@ const logger = log("session");
 // Tunables (ported from v1's hard-won values).
 const CHUNK = 180; // chars per send-keys -l burst
 const SETTLE_CHUNK_MS = 30; // between chunks
+const CHUNK_RETRY_MAX = 3; // re-sends of a single burst tmux rejected
+const CHUNK_RETRY_MS = 50; // pause before re-sending that burst
 const SETTLE_BEFORE_ENTER_MS = 150; // let bracketed-paste finish before Enter
 const SUBMIT_RETRY_MAX = 4; // retry-Enter attempts after the first send
 const SUBMIT_RETRY_POLL_MS = 1000; // wait between confirm samples
@@ -86,9 +88,23 @@ export async function deliverPrompt(socket: string, session: string, prompt: str
   if (state === "typing") clearInput(socket, session); // remove a stray draft before sending
   if (state === "busy" || state === "unknown") return { ok: false, reason: "not-ready" };
 
-  // type the prompt in literal chunks
+  // Type the prompt in literal chunks. A chunk that tmux rejects must be retried, not skipped: the
+  // loop would otherwise carry on and hand the agent a prompt with a hole in the middle of it, which
+  // reads as valid text and is undetectable downstream (see sendText). If a chunk still won't land
+  // after RETRIES, abort the whole delivery and let the queue retry it — a requeued message costs a
+  // few seconds, a silently mangled one costs whatever was in the missing bytes.
   for (let i = 0; i < prompt.length; i += CHUNK) {
-    sendText(socket, session, prompt.slice(i, i + CHUNK));
+    const chunk = prompt.slice(i, i + CHUNK);
+    let sent = false;
+    for (let attempt = 0; attempt <= CHUNK_RETRY_MAX && !sent; attempt++) {
+      if (attempt > 0) await sleep(CHUNK_RETRY_MS);
+      sent = sendText(socket, session, chunk);
+    }
+    if (!sent) {
+      logger.error({ session, offset: i, len: chunk.length }, "chunk failed to land; aborting delivery");
+      clearInput(socket, session); // don't leave a half-typed prompt parked in the input box
+      return { ok: false, reason: "not-ready" };
+    }
     if (i + CHUNK < prompt.length) await sleep(SETTLE_CHUNK_MS);
   }
   await sleep(SETTLE_BEFORE_ENTER_MS);
