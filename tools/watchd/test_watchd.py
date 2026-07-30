@@ -109,5 +109,17 @@ class NoHogGuards(unittest.TestCase):
         self.assertGreaterEqual(w.interval_sec, watchd.MIN_INTERVAL)
 
 
+class RuntimePersistence(unittest.TestCase):
+    def test_fired_state_restored_from_rt_across_reload(self):
+        # A watch that fired must NOT reload as `armed` and re-fire — its runtime
+        # state persists via the `_rt` key (survives loop reloads + restarts).
+        raw = base_watch()
+        raw["_rt"] = {"state": "fired_awaiting_delivery", "fired_msg_id": 99,
+                      "fired_at": NOW, "next_due": NOW + 300, "fail_count": 0}
+        w = watchd.load_watch(raw, now=NOW)
+        self.assertEqual(w.state, "fired_awaiting_delivery")
+        self.assertEqual(w.fired_msg_id, 99)
+
+
 if __name__ == "__main__":
     unittest.main()
