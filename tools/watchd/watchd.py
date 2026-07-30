@@ -168,6 +168,7 @@ def fire(w: Watch, poster: Poster, now: float) -> Watch:
     """Wake the owner. Does NOT deregister. On a clean 200+id the watch enters
     fired_awaiting_delivery; on any failure it stays armed for a backed-off
     re-POST (the wake is NEVER dropped — gate 1)."""
+    entry_fired = w.state == "fired_awaiting_delivery"   # True when this is a repost
     if not w.fire_epoch:                 # first fire of this episode -> stable dedup anchor
         w.fire_epoch = now
     try:
@@ -180,8 +181,14 @@ def fire(w: Watch, poster: Poster, now: float) -> Watch:
         w.fired_msg_id = msg_id
         w.fired_at = now
         w.fail_count = 0
+    elif entry_fired:
+        # A REPOST failed: stay fired_awaiting_delivery and retry — never revert to
+        # armed (re-evaluating a one-shot condition at the worst moment). fire_epoch
+        # stays set so the retry keeps the same dedup key.
+        w.fired_at = now
+        w.last_error = w.last_error or f"repost not confirmed (status={status})"
     else:
-        # keep armed; back off and retry the POST. NEVER advance/deregister.
+        # First fire failed: keep armed, back off, retry the POST. NEVER deregister.
         w.fail_count += 1
         w.state = "armed"
         w.next_due = now + _backoff(w)
@@ -216,10 +223,12 @@ def _backoff(w: Watch) -> float:
 
 
 def _render(w: Watch, now: float, result: Any = "") -> str:
-    try:
-        return w.on_fire_content.format(result=result, id=w.id, now=int(now))
-    except Exception:  # noqa: BLE001 — a bad template must not block the wake
-        return w.on_fire_content
+    # Explicit token replace, NOT str.format: agent-authored content must never
+    # reach a format string, so `{result.__class__...}` introspection can't resolve.
+    out = w.on_fire_content
+    for tok, val in (("{result}", str(result)), ("{id}", w.id), ("{now}", str(int(now)))):
+        out = out.replace(tok, val)
+    return out
 
 
 # --- POLL checks (gate 5: http | shell | file_mtime) ------------------------
@@ -333,7 +342,7 @@ def load_registry(now: float) -> "dict[str, Watch]":
 
 
 def write_status(reg: "dict[str, Watch]") -> None:
-    snap = {"updated_at": None, "count": len(reg), "watches": [
+    snap = {"updated_at": time.time(), "count": len(reg), "watches": [
         {"id": w.id, "owner": w.owner_agent, "state": w.state, "next_due": w.next_due,
          "last_check_ok": w.last_check_ok, "last_error": w.last_error,
          "expires_at": w.expires_at, "fired_msg_id": w.fired_msg_id} for w in reg.values()]}
@@ -387,6 +396,9 @@ def main() -> None:  # pragma: no cover — the IO loop; logic is unit-tested ab
                 fired, _ = run_check(w)
                 if fired:
                     log.info("watch %s FIRED -> wake %s", w.id, w.on_fire_to)
+                    if not w.fire_epoch:            # persist the dedup anchor BEFORE the
+                        w.fire_epoch = now          # POST, so a crash in the POST->persist
+                        persist_runtime(w, wdir)    # window can't lose it and double-wake.
                     w = fire(w, poster, now)
                 else:
                     w.next_due = now + w.interval_sec

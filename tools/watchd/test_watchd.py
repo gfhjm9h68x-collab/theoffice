@@ -59,6 +59,23 @@ class Gate1DeliveryConfirmBeforeDeregister(unittest.TestCase):
         self.assertNotEqual(w.state, "fired_awaiting_delivery")
         self.assertNotEqual(w.state, "deregistered")
 
+    def test_repost_failure_keeps_fired_state(self):
+        # A failed RE-POST must stay fired_awaiting_delivery (retry delivery), never
+        # revert to armed and re-evaluate the one-shot condition.
+        w = watchd.load_watch(base_watch(), now=NOW)
+        w = watchd.fire(w, lambda to, c, d: (200, 5), now=NOW)      # first fire ok
+        self.assertEqual(w.state, "fired_awaiting_delivery")
+        w = watchd.fire(w, lambda to, c, d: (500, None), now=NOW + 130)  # repost fails
+        self.assertEqual(w.state, "fired_awaiting_delivery")
+        self.assertEqual(w.fire_epoch, NOW)                         # dedup anchor unchanged
+
+    def test_render_is_not_a_format_string(self):
+        # Agent content must never reach str.format -> introspection can't resolve.
+        w = watchd.load_watch(base_watch(on_fire={"content": "x {result.__class__} {result}"}), now=NOW)
+        out = watchd._render(w, NOW, result="hi")
+        self.assertIn("{result.__class__}", out)   # left literal, not resolved
+        self.assertIn("hi", out)                    # the real token IS substituted
+
     def test_repeat_always_rearms_only_after_delivery(self):
         w = watchd.load_watch(base_watch(repeat="always"), now=NOW)
         w = watchd.fire(w, lambda to, c, d: (200, 7), now=NOW)
