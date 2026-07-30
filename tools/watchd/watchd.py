@@ -56,7 +56,8 @@ class Watch:
     # runtime state
     state: str = "armed"                 # armed | fired_awaiting_delivery | expired | deregistered
     fired_msg_id: Optional[int] = None
-    fired_at: float = 0.0
+    fire_epoch: float = 0.0              # set once per fire episode; STABLE dedup key
+    fired_at: float = 0.0               # updated each (re)POST; drives the repost window
     next_due: float = 0.0
     fail_count: int = 0
     last_error: str = ""
@@ -64,7 +65,9 @@ class Watch:
 
     @property
     def dedup_key(self) -> str:
-        return f"watch:{self.id}:{int(self.fired_at) or int(self.created_at)}"
+        # Stable across reposts of the SAME fire episode (fire_epoch is set once),
+        # so the engine can dedup a re-sent wake instead of double-waking the agent.
+        return f"watch:{self.id}:{int(self.fire_epoch) or int(self.created_at)}"
 
 
 # --- Loading / validation (gates 2, 3) --------------------------------------
@@ -120,6 +123,7 @@ def load_watch(raw: dict, now: float) -> Watch:
     if isinstance(rt, dict):
         w.state = rt.get("state", w.state)
         w.fired_msg_id = rt.get("fired_msg_id", w.fired_msg_id)
+        w.fire_epoch = float(rt.get("fire_epoch", w.fire_epoch))
         w.fired_at = float(rt.get("fired_at", w.fired_at))
         w.next_due = float(rt.get("next_due", w.next_due))
         w.fail_count = int(rt.get("fail_count", w.fail_count))
@@ -133,7 +137,7 @@ def persist_runtime(w: Watch, wdir: str) -> None:
     try:
         with open(path) as f:
             raw = json.load(f)
-        raw["_rt"] = {"state": w.state, "fired_msg_id": w.fired_msg_id,
+        raw["_rt"] = {"state": w.state, "fired_msg_id": w.fired_msg_id, "fire_epoch": w.fire_epoch,
                       "fired_at": w.fired_at, "next_due": w.next_due, "fail_count": w.fail_count}
         tmp = path + ".tmp"
         with open(tmp, "w") as f:
@@ -165,6 +169,8 @@ def fire(w: Watch, poster: Poster, now: float) -> Watch:
     """Wake the owner. Does NOT deregister. On a clean 200+id the watch enters
     fired_awaiting_delivery; on any failure it stays armed for a backed-off
     re-POST (the wake is NEVER dropped — gate 1)."""
+    if not w.fire_epoch:                 # first fire of this episode -> stable dedup anchor
+        w.fire_epoch = now
     try:
         status, msg_id = poster(w.on_fire_to, _render(w, now), w.dedup_key)
     except Exception as e:  # noqa: BLE001 — never let a POST error kill the loop
@@ -199,6 +205,7 @@ def reconcile_delivery(w: Watch, delivery_checker: DeliveryChecker, now: float):
     if w.repeat == "always":
         w.state = "armed"
         w.fired_msg_id = None
+        w.fire_epoch = 0.0               # next fire is a fresh episode (new dedup key)
         w.next_due = now + w.interval_sec
         return "rearm", w
     w.state = "deregistered"
@@ -361,7 +368,11 @@ def main() -> None:  # pragma: no cover — the IO loop; logic is unit-tested ab
                     deregister(w)
                     continue
                 if action == "repost":
-                    w.state = "armed"; w.next_due = now
+                    # The event already fired; re-SEND the wake (idempotent via the
+                    # stable dedup_key), do NOT re-evaluate the condition — a one-shot
+                    # condition may no longer be true and the wake would be lost.
+                    log.warning("watch %s wake undelivered -> re-POST", w.id)
+                    w = fire(w, poster, now)
                 persist_runtime(w, wdir)
                 continue
             if w.state == "armed" and now >= w.next_due:
