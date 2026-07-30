@@ -120,6 +120,20 @@ class Gate3AuthzAndFailSafe(unittest.TestCase):
             watchd.load_watch(bad, now=NOW)
 
 
+class DeliveryCheckResolution(unittest.TestCase):
+    def test_find_delivered_at_by_id(self):
+        msgs = [{"id": 9, "delivered_at": None}, {"id": 42, "delivered_at": 1785445000},
+                {"id": 7, "delivered_at": 1785440000}]
+        self.assertEqual(watchd._find_delivered_at(msgs, 42), 1785445000)
+
+    def test_find_delivered_at_undelivered_is_none(self):
+        self.assertIsNone(watchd._find_delivered_at([{"id": 42, "delivered_at": None}], 42))
+
+    def test_find_delivered_at_absent_id_is_none(self):
+        # id not in the (paginated) window -> None -> KEEP, never false-confirm/deregister.
+        self.assertIsNone(watchd._find_delivered_at([{"id": 9, "delivered_at": 1}], 42))
+
+
 class NoHogGuards(unittest.TestCase):
     def test_interval_floored_to_min(self):
         w = watchd.load_watch(base_watch(cadence={"interval_sec": 5}), now=NOW)

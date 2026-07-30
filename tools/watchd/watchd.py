@@ -290,19 +290,35 @@ def make_poster() -> Poster:
     return post
 
 
+def _find_delivered_at(messages: list, msg_id: int) -> Optional[float]:
+    """Pure: pull delivered_at for msg_id out of an /api/messages payload.
+    Absent id or null delivered_at -> None (fail toward keep-watching, never a
+    false-confirm)."""
+    for m in messages:
+        if m.get("id") == msg_id:
+            return m.get("delivered_at")
+    return None
+
+
 def make_delivery_checker() -> DeliveryChecker:
     """Delivery confirmation via the runtime API — the runtime is the ONLY DB
     authority. watchd NEVER opens the engine's sqlite (direct-sqlite fork-drift is
     what killed claudeclaw.db). The wake POST returns an agent_messages id; GET
-    /api/messages exposes that row's `delivered_at`, same id space, no DB touch."""
+    /api/messages exposes that row's `delivered_at`, same id space, no DB touch.
+
+    The network GET is GUARDED: an API blip (routine on a deploy/repo-update
+    restart) must NOT crash watchd — a reliability daemon can't be fragile to the
+    very restarts it exists to survive. On any error the check returns None
+    (treated as not-yet-delivered), so the watch simply retries next loop."""
     def check(msg_id: int) -> Optional[float]:
-        req = urllib.request.Request(_api_base() + "/api/messages?from=watchd",
-                                     headers={"Authorization": f"Bearer {_bearer()}"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            for m in json.loads(r.read().decode()):
-                if m.get("id") == msg_id:
-                    return m.get("delivered_at")
-        return None
+        try:
+            req = urllib.request.Request(_api_base() + "/api/messages?from=watchd",
+                                         headers={"Authorization": f"Bearer {_bearer()}"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return _find_delivered_at(json.loads(r.read().decode()), msg_id)
+        except Exception as e:  # noqa: BLE001 — API blip => undelivered, retry; never crash
+            log.warning("delivery-check GET failed (treating as undelivered): %s", e)
+            return None
     return check
 
 
@@ -375,6 +391,9 @@ def main() -> None:  # pragma: no cover — the IO loop; logic is unit-tested ab
         if _rate > GLOBAL_CHECKS_PER_MIN:
             log.warning("aggregate check-rate %.0f/min exceeds budget %d/min -- throttle is a v2 fast-follow", _rate, GLOBAL_CHECKS_PER_MIN)
         for w in list(reg.values()):
+          # Defense in depth: one watch's unexpected error must never kill the
+          # daemon or starve the other watches — log it and move on.
+          try:
             if is_expired(w, now) and w.state != "fired_awaiting_delivery":
                 log.info("watch %s expired unfired -> deregister", w.id)
                 deregister(w)
@@ -403,6 +422,8 @@ def main() -> None:  # pragma: no cover — the IO loop; logic is unit-tested ab
                 else:
                     w.next_due = now + w.interval_sec
                 persist_runtime(w, wdir)
+          except Exception as e:  # noqa: BLE001 — never let one watch crash the loop
+            log.error("watch %s tick error (skipped): %s", getattr(w, "id", "?"), e)
         write_status(reg)
         # sleep until the next due watch, capped so new registrations are noticed.
         due = [w.next_due for w in reg.values() if w.state == "armed"]
