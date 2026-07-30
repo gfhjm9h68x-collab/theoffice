@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 import subprocess
 import time
 import urllib.request
@@ -29,7 +28,7 @@ MAX_TTL = 30 * 86_400             # gate 2: hard cap
 MIN_INTERVAL = 60                 # no-hog: floor on poll interval (seconds)
 DEFAULT_INTERVAL = 300
 RELOAD_INTERVAL = 15              # max sleep before re-stat'ing the registry dir
-GLOBAL_CHECKS_PER_MIN = 120       # no-hog: global frequency budget
+GLOBAL_CHECKS_PER_MIN = 120       # no-hog: global budget. v1 WARNS on cross; enforcement = v2 fast-follow
 DELIVERY_REPOST_AFTER = 120       # re-POST a wake if delivered_at not set within this
 BACKOFF_FACTOR = 2
 BACKOFF_MAX = 3600
@@ -283,15 +282,18 @@ def make_poster() -> Poster:
 
 
 def make_delivery_checker() -> DeliveryChecker:
-    dbp = os.path.join(os.environ["OFFICE_TENANT_ROOT"], "store", "theoffice.db")
-
+    """Delivery confirmation via the runtime API — the runtime is the ONLY DB
+    authority. watchd NEVER opens the engine's sqlite (direct-sqlite fork-drift is
+    what killed claudeclaw.db). The wake POST returns an agent_messages id; GET
+    /api/messages exposes that row's `delivered_at`, same id space, no DB touch."""
     def check(msg_id: int) -> Optional[float]:
-        c = sqlite3.connect(f"file:{dbp}?mode=ro", uri=True, timeout=3)
-        try:
-            row = c.execute("select delivered_at from inbound_queue where id=?", (msg_id,)).fetchone()
-            return row[0] if row and row[0] is not None else None
-        finally:
-            c.close()
+        req = urllib.request.Request(_api_base() + "/api/messages?from=watchd",
+                                     headers={"Authorization": f"Bearer {_bearer()}"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            for m in json.loads(r.read().decode()):
+                if m.get("id") == msg_id:
+                    return m.get("delivered_at")
+        return None
     return check
 
 
@@ -357,6 +359,12 @@ def main() -> None:  # pragma: no cover — the IO loop; logic is unit-tested ab
         now = time.time()
         wdir = watches_dir()
         reg = load_registry(now)
+        # no-hog: GLOBAL_CHECKS_PER_MIN is not yet ENFORCED (fast-follow, tracked).
+        # Make a runaway VISIBLE not silent: warn if the aggregate armed check-rate
+        # would cross the declared budget. TODO(watchd-v2): throttle instead of warn.
+        _rate = sum(60.0 / max(w.interval_sec, 1) for w in reg.values() if w.state == "armed")
+        if _rate > GLOBAL_CHECKS_PER_MIN:
+            log.warning("aggregate check-rate %.0f/min exceeds budget %d/min -- throttle is a v2 fast-follow", _rate, GLOBAL_CHECKS_PER_MIN)
         for w in list(reg.values()):
             if is_expired(w, now) and w.state != "fired_awaiting_delivery":
                 log.info("watch %s expired unfired -> deregister", w.id)

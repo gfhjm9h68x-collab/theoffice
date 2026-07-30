@@ -72,9 +72,12 @@ event it exists to catch). Fire flow:
 1. POST `/api/messages`. Require **HTTP 200 + a message `id`** in the response.
    A non-200 / missing id ⇒ stay `fired-awaiting-delivery`, re-POST with backoff.
 2. Hold `fired-awaiting-delivery`, recording the returned `msg_id`. Each loop,
-   read the `inbound_queue` row for that id (read-only sqlite) and check
-   `delivered_at`. Not delivered within a window ⇒ re-POST (idempotent by dedup
-   key). Only once `delivered_at IS NOT NULL`:
+   check `delivered_at` **via the runtime API** (`GET /api/messages` exposes the
+   `agent_messages` row's `delivered_at`, same id space as the POST response).
+   watchd **never opens the engine's sqlite** — the runtime is the sole DB
+   authority (direct-sqlite fork-drift is what killed `claudeclaw.db`). Not
+   delivered within a window ⇒ re-POST (idempotent by the stable `fire_epoch`
+   dedup key). Only once `delivered_at` is set:
    - `repeat:"once"` → deregister.
    - `repeat:"always"` → re-arm (state `armed`, `next_due = now + interval`) with
      a dedup guard so the same still-true condition does not immediately re-fire.
@@ -116,8 +119,11 @@ what is being watched and spot a zombie. Trust needs a window into it.
   60 s) floor is enforced and anything lower is clamped + logged.
 - **Exponential backoff on error**, capped at `max_sec` (default 3600), so a
   flapping/erroring check backs off instead of hammering.
-- **Global frequency budget.** A ceiling on total checks/minute across all
-  watches; watches that would exceed it are throttled + logged (never silently).
+- **Global frequency budget.** `GLOBAL_CHECKS_PER_MIN` bounds total checks/minute
+  across all watches. **v1 WARNS** when the aggregate armed check-rate would cross
+  it (runaway is visible, never silent); actual throttling is a tracked **v2
+  fast-follow** — v1's per-watch `MIN_INTERVAL` floor + backoff + sleep-until-due
+  already bound the real rate, and v1 has only a handful of watches.
 
 ## Failure modes handled
 - Service crash → `Restart=always` + on-disk registry ⇒ watches survive a
