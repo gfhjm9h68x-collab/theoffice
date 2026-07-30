@@ -1,0 +1,19 @@
+# watchd systemd --user unit TEMPLATE. Rendered by install.sh with this install's
+# real paths (@REPO_ROOT@ / @OFFICE_TENANT_ROOT@ / @PYTHON@) — do NOT install this
+# file directly, and do NOT hardcode a tenant's paths here (portability).
+[Unit]
+Description=watchd — fleet trigger service (wakes agents on registered conditions; kills the foreground poll-loop anti-pattern, FLEET RULE 1)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=OFFICE_TENANT_ROOT=@OFFICE_TENANT_ROOT@
+ExecStart=@PYTHON@ @REPO_ROOT@/tools/watchd/watchd.py
+Restart=always
+RestartSec=5
+# Lightweight single stdlib-python process (footprint was the whole point).
+MemoryHigh=64M
+MemoryMax=128M
+
+[Install]
+WantedBy=default.target

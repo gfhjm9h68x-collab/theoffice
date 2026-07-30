@@ -49,7 +49,7 @@ trivially inspectable and survives a service restart on disk.
     // http:      { "url":..., "expect_status":200, "expect_body_contains":"..." }
     // shell:     { "cmd":[...], "expect_exit":0, "expect_stdout_contains":"..." }
     // file_mtime:{ "path":..., "newer_than_epoch":<ts> }
-    "url": "http://192.168.10.162:8082/api/...",
+    "url": "http://tracker.example:8082/api/...",
     "expect_body_contains": "\"valid\":true"
   },
   "fire_when": "match",                   // "match" (check passed) | "nomatch"

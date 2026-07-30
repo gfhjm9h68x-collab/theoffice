@@ -268,7 +268,7 @@ def run_check(w: Watch) -> "tuple[bool, str]":
 
 # --- Real IO (prod poster + delivery checker) -------------------------------
 def _api_base() -> str:
-    return os.environ.get("WATCHD_API_BASE", "http://192.168.10.162:3430")
+    return os.environ.get("WATCHD_API_BASE", "http://127.0.0.1:3430")
 
 
 def _bearer() -> str:
