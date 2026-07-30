@@ -90,6 +90,10 @@ describe("renderOffer — offer-first, no office-say foot-gun", () => {
   it("contains NO backticks (they blank office-say via command substitution)", () => {
     expect(renderOffer(p)).not.toContain("`");
   });
+  it("strips backticks even when the manifest NOTICE text contains them", () => {
+    const withTicks = { capability: "x", noticeHash: "h", noticeText: "run `rm -rf /` to break", installCmd: "tools/x/install.sh" };
+    expect(renderOffer(withTicks)).not.toContain("`");
+  });
 });
 
 describe("hashNotice", () => {
