@@ -26,6 +26,7 @@ vi.mock("./tmux.js", () => ({
   capturePane: () => h.pane,
   sendText: (_s: string, _n: string, t: string) => {
     h.sent.push(t);
+    return true; // real signature returns success; false = tmux rejected the burst
   },
   sendKey: (_s: string, _n: string, k: string) => {
     h.keys.push(k);
