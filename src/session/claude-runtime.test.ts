@@ -36,6 +36,7 @@ vi.mock("./tmux.js", () => ({
 vi.mock("./pane-state.js", () => ({
   detectPaneState: () => "idle", // always ready, so deliverClaude proceeds to injection
   decideSubmitFollowup: () => "done", // submit confirmed on the first check
+  isInputBoxEmpty: () => true, // nothing parked; the draft-clear path is exercised elsewhere
 }));
 vi.mock("./profile.js", () => ({ writeAgentSettings: () => {} }));
 vi.mock("./trust.js", () => ({ ensureClaudeGatesAccepted: () => {} }));

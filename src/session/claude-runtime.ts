@@ -5,7 +5,7 @@ import type { EngineConfig, AgentDef } from "../types.js";
 import { log } from "../logger.js";
 import { capturePane, clearInput, hasSession, newSession, sendKey, sendText, sessionNameFor } from "./tmux.js";
 import { withPaneLock } from "./pane-lock.js";
-import { detectPaneState, decideSubmitFollowup } from "./pane-state.js";
+import { detectPaneState, decideSubmitFollowup, isInputBoxEmpty } from "./pane-state.js";
 import { writeAgentSettings } from "./profile.js";
 import { ensureClaudeGatesAccepted } from "./trust.js";
 import { markDelivering, markDelivered, markFailed, requeue } from "../queue/index.js";
@@ -32,6 +32,8 @@ const SUBMIT_RETRY_MAX = 4; // retry-Enter attempts after the first send
 const SUBMIT_RETRY_POLL_MS = 1000; // wait between confirm samples
 const READY_SAMPLE_GAP_MS = 250; // double-sample idle gap
 const MAX_DELIVERY_ATTEMPTS = 5; // give up + mark failed after this many
+const CLEAR_DRAFT_PASSES = 16; // C-u + join-backspace rounds before a draft counts as unclearable
+const CLEAR_DRAFT_SETTLE_MS = 40; // let the TUI repaint before re-reading the box
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -67,6 +69,33 @@ async function isReady(socket: string, session: string): Promise<boolean> {
   return b != null && detectPaneState(b) === "idle";
 }
 
+/**
+ * Empty the input box for real, and confirm it.
+ *
+ * `clearInput` is a single C-u, which kills only the line the cursor is on. A draft that spans
+ * several lines therefore survives it: the last line clears, everything above stays parked, and the
+ * caller gets no signal. That is how the 2026-07-31 wedge grew — a delivery that kept aborting
+ * mid-prompt "cleared" the input after every attempt and still let two hours of half-typed prompts
+ * pile up in the box.
+ *
+ * So: C-u kills the current line, BSpace deletes the newline and joins the cursor to the end of the
+ * line above (a no-op on an empty first line), and the pane is re-read until the box is genuinely
+ * empty. Returns false when it is still not empty after CLEAR_DRAFT_PASSES — the caller must then
+ * refuse to type, because appending a prompt to leftover text produces one mangled message with no
+ * other symptom.
+ */
+async function clearDraft(socket: string, session: string): Promise<boolean> {
+  for (let pass = 0; pass < CLEAR_DRAFT_PASSES; pass++) {
+    clearInput(socket, session);
+    sendKey(socket, session, "BSpace");
+    await sleep(CLEAR_DRAFT_SETTLE_MS);
+    const pane = capturePane(socket, session);
+    if (pane == null) return false;
+    if (isInputBoxEmpty(pane)) return true;
+  }
+  return false;
+}
+
 export interface DeliveryResult {
   ok: boolean;
   reason?: "not-ready" | "wedged" | "submit-give-up" | "no-session";
@@ -85,7 +114,11 @@ export async function deliverPrompt(socket: string, session: string, prompt: str
   if (pre == null) return { ok: false, reason: "not-ready" };
   const state = detectPaneState(pre);
   if (state === "error") return { ok: false, reason: "wedged" };
-  if (state === "typing") clearInput(socket, session); // remove a stray draft before sending
+  if (state === "typing" && !(await clearDraft(socket, session))) {
+    // Typing onto a draft we could not clear yields one silently mangled prompt; a requeue is cheap.
+    logger.error({ session }, "parked draft would not clear; refusing to type on top of it");
+    return { ok: false, reason: "not-ready" };
+  }
   if (state === "busy" || state === "unknown") return { ok: false, reason: "not-ready" };
 
   // Type the prompt in literal chunks. A chunk that tmux rejects must be retried, not skipped: the
@@ -102,7 +135,11 @@ export async function deliverPrompt(socket: string, session: string, prompt: str
     }
     if (!sent) {
       logger.error({ session, offset: i, len: chunk.length }, "chunk failed to land; aborting delivery");
-      clearInput(socket, session); // don't leave a half-typed prompt parked in the input box
+      // Don't leave a half-typed prompt parked in the input box — and make sure it actually went,
+      // or the next attempt inherits the wreckage of this one.
+      if (!(await clearDraft(socket, session))) {
+        logger.error({ session }, "half-typed prompt left in the input box; agent needs a restart");
+      }
       return { ok: false, reason: "not-ready" };
     }
     if (i + CHUNK < prompt.length) await sleep(SETTLE_CHUNK_MS);

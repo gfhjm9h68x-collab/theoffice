@@ -78,7 +78,12 @@ export function sendKey(socket: string, name: string, key: string): void {
   tmux(socket, ["send-keys", "-t", name, key]);
 }
 
-/** Clear any parked draft in the input box. */
+/**
+ * Kill the text on the CURRENT input line (C-u). This is a primitive, not a "clear the box":
+ * a draft spanning several lines keeps every line above the cursor, and the caller sees no
+ * difference. Callers that need the box actually empty must use the verified clear loop in
+ * claude-runtime (`clearDraft`), which pairs this with a join-line backspace and re-reads the pane.
+ */
 export function clearInput(socket: string, name: string): void {
   sendKey(socket, name, "C-u");
 }
