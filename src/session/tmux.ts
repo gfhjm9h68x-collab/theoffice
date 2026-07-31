@@ -61,9 +61,16 @@ export function capturePane(socket: string, name: string, opts: CaptureOpts = {}
  * one 180-char burst vanished from an agent's status report; the two fragments were concatenated,
  * two open items silently disappeared, and nothing anywhere logged a problem. Callers must check
  * this and either retry or fail loudly — never deliver a prompt with a hole in it.
+ *
+ * `--` terminates tmux's own option parsing. Without it a burst that happens to START with "-" is
+ * read as a flag and the whole burst is rejected ("invalid flag"), deterministically, for that
+ * text at that chunk offset. Retries cannot help: the same bytes fail the same way every time. On
+ * 2026-07-31 a memory preamble whose 180-char boundary landed on a "- (hot) ..." bullet wedged an
+ * agent for two hours — every delivery aborted at the same offset and the partially typed prompt
+ * piled up in the input box.
  */
 export function sendText(socket: string, name: string, text: string): boolean {
-  return tmux(socket, ["send-keys", "-t", name, "-l", text]).code === 0;
+  return tmux(socket, ["send-keys", "-t", name, "-l", "--", text]).code === 0;
 }
 
 /** Send a named key / chord, e.g. "Enter", "C-u", "Escape". */
