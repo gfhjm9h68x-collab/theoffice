@@ -20,7 +20,11 @@ vi.mock("./tmux.js", () => ({
   sendKey: () => {},
   clearInput: () => {},
 }));
-vi.mock("./pane-state.js", () => ({ detectPaneState: () => "idle", decideSubmitFollowup: () => "done" }));
+vi.mock("./pane-state.js", () => ({
+  detectPaneState: () => "idle",
+  decideSubmitFollowup: () => "done",
+  isInputBoxEmpty: () => true,
+}));
 vi.mock("./profile.js", () => ({ writeAgentSettings: () => {} }));
 vi.mock("./trust.js", () => ({ ensureClaudeGatesAccepted: () => {} }));
 vi.mock("../env.js", () => ({ readEnvFile: () => ({}) }));

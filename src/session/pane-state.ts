@@ -92,6 +92,22 @@ export function isReadyForPrompt(pane: string): boolean {
 }
 
 /**
+ * True when the live input box exists and holds NO draft at all — no parked text on any of its
+ * lines, no pending-paste placeholder.
+ *
+ * Deliberately narrower than `detectPaneState(pane) !== "typing"`: a box holding only a
+ * `[Pasted text #1 …]` placeholder classifies as "busy", so a not-typing check would call that box
+ * clean and type a fresh prompt on top of the leftover paste. This is the predicate the draft-clear
+ * loop verifies against, and it must answer "is the box empty", nothing else.
+ */
+export function isInputBoxEmpty(pane: string): boolean {
+  const box = liveInputBox(pane);
+  if (box == null) return false;
+  if (PENDING_PASTE_RX.test(box)) return false;
+  return !box.split("\n").some((l) => PARKED_INPUT_RX.test(l));
+}
+
+/**
  * Return the inner content of the live input box (between the two most recent
  * box separators above the idle footer), or null when there is no live box.
  * Bounded so a parked input in scrollback is never mistaken for live state.
