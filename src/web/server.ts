@@ -12,7 +12,10 @@ import { loadAgents } from "../agents.js";
 import { loadScheduledTasks } from "../scheduler/index.js";
 import { sendAgentMessage } from "../bus/index.js";
 import { enqueueOutbound } from "../queue/index.js";
-import { saveMemory, searchMemories } from "../memory/store.js";
+import { saveMemory, searchMemories, setEmbedding } from "../memory/store.js";
+import { hybridSearch } from "../memory/semantic.js";
+import { embedText } from "../memory/embed.js";
+import { encodeVector } from "../memory/vector.js";
 import { computeUsage, WINDOW_MS } from "./usage.js";
 import { checkUpdates, applyUpdate } from "./update.js";
 import { runEmergencyRestart } from "./emergency.js";
@@ -486,12 +489,17 @@ async function handleApi(
 
   // GET /api/memories  POST /api/memories
   if (path === "/api/memories" && m === "GET") {
-    const rows = searchMemories({
-      agentId: url.searchParams.get("agent") ?? undefined,
-      q: url.searchParams.get("q") ?? undefined,
-      category: (url.searchParams.get("category") as MemoryTier) ?? undefined,
-      limit: Number(url.searchParams.get("limit") ?? 50),
-    });
+    const agentId = url.searchParams.get("agent") ?? undefined;
+    const q = url.searchParams.get("q") ?? undefined;
+    const category = (url.searchParams.get("category") as MemoryTier) ?? undefined;
+    const limit = Number(url.searchParams.get("limit") ?? 50);
+    // A text search for ONE agent goes through the hybrid path (keywords + meaning, RRF-fused).
+    // Everything else — a listing, or a cross-agent search — stays on the plain SQL path: there is
+    // no per-agent vector set to compare against, and a listing has no query to embed.
+    const rows =
+      q && q.trim() && agentId
+        ? await hybridSearch({ agentId, q, category: category ? [category] : undefined, limit })
+        : searchMemories({ agentId, q, category, limit });
     return json(res, 200, rows);
   }
   if (path === "/api/memories" && m === "POST") {
@@ -499,6 +507,15 @@ async function handleApi(
     const b = parseJson(raw);
     if (!b?.agentId || !b?.content) return json(res, 400, { error: "agentId and content required" });
     const id = saveMemory({ agentId: b.agentId, content: b.content, category: b.category, keywords: b.keywords });
+    // Embed AFTER responding: saving a memory must never wait on (or fail because of) the model. A
+    // memory that misses its embedding is still findable by keyword, and the backfill picks it up.
+    void embedText(b.content)
+      .then((v) => {
+        if (v) setEmbedding(id, encodeVector(v));
+      })
+      .catch(() => {
+        /* enhancement only — never surfaces to the caller */
+      });
     return json(res, 200, { id });
   }
 
