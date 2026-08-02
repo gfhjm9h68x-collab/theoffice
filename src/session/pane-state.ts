@@ -12,12 +12,29 @@
 export type PaneState = "idle" | "busy" | "typing" | "unknown" | "error";
 
 /**
- * The idle footer. Requires either the shift+tab tail or a shell-count tail
- * (ctrl+t / ↓ to manage) so a quoted "bypass permissions on · 1 shell" in
- * scrollback is not misread as the live footer.
+ * The idle footer. The live bypass-mode footer is prefixed by the `⏵⏵` toggle
+ * glyph, which sits at the FRONT and so survives right-side truncation — the
+ * footer runs `⏵⏵ bypass permissions on · <hint> · <hint> …` and at an 80-col
+ * detached pane the tail (`↓ to manage`) is frequently cut off entirely when
+ * several segments are present (`· install gh for PR status · 1 shell · ← for
+ * agents · ↓ to manage`). So the primary anchor is `⏵⏵ … bypass permissions on`
+ * (front, truncation-proof); the second alternative (bypass + a visible
+ * `(shift+tab to cycle)` / `↓ to manage` tail) covers terminals that drop the
+ * glyph; `? for shortcuts` is the strict-mode footer.
+ *
+ * Safe against scrollback: a quoted "bypass permissions on · 1 shell" in a
+ * message has neither the `⏵⏵` glyph nor the affordance tail, so it is rejected;
+ * and the footer is located from the BOTTOM, so the live last-line footer wins.
+ * A BUSY pane is caught FIRST by BUSY_INDICATORS (the tokens-`↓` counter, now
+ * minute-aware), so a mid-turn footer never reaches this idle test.
+ *
+ * The earlier regex required the shell count to be immediately followed by its
+ * tail, so a footer with an intervening segment — or a truncated tail — read
+ * `unknown` and the agent got ZERO deliveries while a background shell ran
+ * (2026-07-30 incident: dwight went deaf to the owner + scheduled tasks for hours).
  */
 const IDLE_FOOTER_RX =
-  /bypass permissions on(?: \(shift\+tab to cycle\)| · \d+ shells? · (?:ctrl\+t|↓ to manage))|\? for shortcuts/;
+  /⏵⏵[^\n]*bypass permissions on\b|bypass permissions on\b[^\n]*?(?:\(shift\+tab to cycle\)|↓ to manage)|\? for shortcuts/;
 
 /**
  * Positive busy signals — only signatures that vanish the moment a turn ends.
@@ -26,7 +43,9 @@ const IDLE_FOOTER_RX =
  */
 const BUSY_INDICATORS: RegExp[] = [
   /\besc to interrupt\b/,
-  /\(\s*\d+s\s*·\s*↓\s*\d/,
+  // Token counter: "(52s · ↓ 2.6k" AND the minute form "(1m 14s · ↓ 3.6k" once
+  // a turn passes 60s. Missing the `\d+m` branch let long turns read not-busy.
+  /\(\s*(?:\d+m\s*)?\d+s\s*·\s*↓\s*\d/,
   /\b(?:Combobulating|Beaming|Thinking|Pondering|Reticulating|Configuring|Noodling|Ruminating|Percolating|Cogitating|Deliberating|Contemplating|Musing|Brewing|Synthesizing|Distilling|Refining|Simmering|Crafting|Formulating|Consulting|Unfurling|Unspooling|Unraveling)…\s*\(\s*\d+s\s*·\s*↓/,
 ];
 

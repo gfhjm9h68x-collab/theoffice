@@ -4,6 +4,7 @@ import { dirname, basename, join } from "node:path";
 import { REPO_ROOT } from "../config.js";
 import { getDb } from "../db/index.js";
 import { log } from "../logger.js";
+import { recordSetupNotices } from "./setup-notices.js";
 
 const logger = log("update");
 const BACKUPS_TO_KEEP = 5;
@@ -167,6 +168,13 @@ export function applyUpdate(opts?: { discardLocal?: boolean }): {
     out.push(`DB backup preserved at ${backupPath} (restore: stop engine, cp it over the db, start engine)`);
     return { ok: false, output: out.join("\n") };
   }
+
+  // Record capability setup-notices from the applied commits — reached ONLY on the
+  // success path (a failed/rolled-back update returned in the catch above), so we
+  // never leave a stale pending notice for a capability that is no longer present.
+  // Delivered to the main agent at the next boot; non-fatal if it fails.
+  const tenantRoot = process.env.OFFICE_TENANT_ROOT ?? join(REPO_ROOT, "tenant");
+  recordSetupNotices(tenantRoot, REPO_ROOT, preHead);
 
   // restart shortly after we've returned the response — ONLY on success
   setTimeout(() => {
