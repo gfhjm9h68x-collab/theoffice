@@ -1,0 +1,908 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OnlyDads</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Archivo:wght@400;500;700;800&family=Courier+Prime:wght@400;700&display=swap">
+<style>
+  /* Layout: a suburban subscription feed — sticky header, hero with a live post, filterable creator grid,
+     a screenplay "premiere" section, a dad-detector quiz and absurd pricing tiers. Cargo-short khaki by day,
+     backyard-at-night denim by dark. */
+  :root {
+    --bg: #ece2c8;          /* cargo-short khaki */
+    --surface: #fbf6e9;     /* white New Balance, slightly used */
+    --ink: #1d2838;         /* dad-jeans denim */
+    --muted: #6b6450;
+    --line: #d4c6a2;
+    --accent: #c94f1b;      /* grill ember */
+    --accent-ink: #fff8ec;
+    --lawn: #2f6e36;        /* diagonal-striped lawn */
+    --lawn-soft: #dfe8cf;
+    --veil: rgba(236, 226, 200, 0.82);
+    --shadow: 0 1px 0 rgba(29, 40, 56, 0.08), 0 8px 24px -14px rgba(29, 40, 56, 0.35);
+    --font-display: "Alfa Slab One", "Rockwell", "Roboto Slab", Georgia, serif;
+    --font-body: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "Courier Prime", "Courier New", Courier, monospace;
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #131922; --surface: #1c2430; --ink: #efe5cc; --muted: #a49c85; --line: #2d3949;
+      --accent: #ef7a3c; --accent-ink: #1a1208; --lawn: #84c27a; --lawn-soft: #22342a;
+      --veil: rgba(28, 36, 48, 0.86);
+      --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 10px 28px -16px rgba(0, 0, 0, 0.8);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #131922; --surface: #1c2430; --ink: #efe5cc; --muted: #a49c85; --line: #2d3949;
+    --accent: #ef7a3c; --accent-ink: #1a1208; --lawn: #84c27a; --lawn-soft: #22342a;
+    --veil: rgba(28, 36, 48, 0.86);
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 10px 28px -16px rgba(0, 0, 0, 0.8);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 400 16px/1.55 var(--font-body);
+  }
+  img, svg { max-width: 100%; }
+  [hidden] { display: none !important; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+  h1, h2, h3 { font-family: var(--font-display); font-weight: 400; line-height: 1.05; text-wrap: balance; margin: 0; }
+  p { margin: 0; }
+
+  .wrap { max-width: 1120px; margin-inline: auto; padding-inline: 16px; }
+  @media (min-width: 700px) { .wrap { padding-inline: 28px; } }
+
+  .eyebrow {
+    font: 700 12px/1 var(--font-body);
+    text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted);
+  }
+
+  /* ---------- header ---------- */
+  .top {
+    position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+    background: var(--bg);
+    border-bottom: 2px solid var(--ink);
+  }
+  .top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 12px; }
+  .logo { font: 400 26px/1 var(--font-display); color: var(--ink); text-decoration: none; letter-spacing: -0.01em; }
+  .logo span { color: var(--accent); }
+  .top nav { display: flex; gap: 20px; align-items: center; }
+  .top nav a { color: var(--ink); text-decoration: none; font-weight: 600; font-size: 14px; }
+  .top nav a:hover { color: var(--accent); }
+  @media (max-width: 720px) { .top nav a.hide-sm { display: none; } }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    border: 2px solid var(--ink); background: var(--surface); color: var(--ink);
+    border-radius: 999px; padding: 9px 16px; font-weight: 700; font-size: 14px; line-height: 1.1;
+    transition: transform 0.12s ease, background 0.12s ease;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btn.done { background: var(--lawn); border-color: var(--lawn); color: var(--surface); }
+
+  /* ---------- ticker ---------- */
+  .ticker { background: var(--ink); color: var(--bg); overflow: hidden; white-space: nowrap; }
+  .ticker-track { display: inline-flex; gap: 48px; padding-block: 9px; animation: tick 60s linear infinite; font: 400 14px/1.2 var(--font-mono); }
+  .ticker-track b { color: var(--accent); font-weight: 700; }
+  @keyframes tick { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  @media (prefers-reduced-motion: reduce) { .ticker-track { animation: none; } }
+
+  /* ---------- hero ---------- */
+  .hero { padding-block: 48px 40px; }
+  .hero .wrap { display: grid; gap: 40px; align-items: center; }
+  @media (min-width: 900px) { .hero .wrap { grid-template-columns: 1.15fr 0.85fr; } }
+  .hero h1 { font-size: clamp(48px, 9vw, 104px); letter-spacing: -0.02em; }
+  .hero h1 span { color: var(--accent); display: inline-block; transform: rotate(-3deg); }
+  .hero .lede { font-size: clamp(18px, 2.2vw, 22px); max-width: 32ch; margin-top: 20px; }
+  .hero .fine { margin-top: 14px; color: var(--muted); font-size: 14px; max-width: 52ch; }
+  .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+  .online { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 28px; font: 400 14px/1.4 var(--font-mono); color: var(--muted); }
+  .online strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--lawn); margin-right: 6px; vertical-align: 1px; }
+
+  /* the featured post */
+  .post {
+    background: var(--surface); border: 2px solid var(--ink); border-radius: var(--radius);
+    box-shadow: 8px 8px 0 var(--ink); padding: 18px; display: grid; gap: 14px; min-width: 0;
+    transform: rotate(1.2deg);
+  }
+  .post-head { display: flex; gap: 12px; align-items: center; }
+  .post-head svg { width: 48px; height: 48px; flex: none; }
+  .post-head .who { min-width: 0; }
+  .post-head .name { font-weight: 800; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .post-head .handle { color: var(--muted); font-size: 13px; }
+  .post-body { font-size: 18px; line-height: 1.45; }
+  .post-media {
+    border-radius: 10px; background: var(--ink); color: var(--bg); display: grid; place-items: center;
+    aspect-ratio: 16 / 9; max-width: 100%; font: 400 clamp(44px, 9vw, 72px)/1 var(--font-display); position: relative; overflow: hidden;
+  }
+  .post-media small { position: absolute; bottom: 10px; left: 12px; font: 400 12px/1 var(--font-mono); opacity: 0.75; }
+  .post-meta { display: flex; gap: 18px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .comments { display: grid; gap: 8px; border-top: 1px dashed var(--line); padding-top: 12px; font-size: 14px; }
+  .comments b { font-weight: 800; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px; font: 700 10px/1 var(--font-body);
+    text-transform: uppercase; letter-spacing: 0.08em; padding: 4px 7px; border-radius: 999px;
+    background: var(--lawn-soft); color: var(--lawn); white-space: nowrap;
+  }
+
+  /* ---------- sections ---------- */
+  section.block { padding-block: 56px; border-top: 2px solid var(--ink); }
+  .section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 16px 32px; margin-bottom: 28px; }
+  .section-head h2 { font-size: clamp(34px, 5vw, 56px); margin-top: 10px; }
+  .section-head p { max-width: 44ch; color: var(--muted); }
+
+  /* filters */
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+  .chip {
+    border: 2px solid var(--ink); background: transparent; border-radius: 999px; padding: 7px 14px;
+    font-weight: 700; font-size: 14px;
+  }
+  .chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  .chip .n { font-variant-numeric: tabular-nums; opacity: 0.65; margin-left: 4px; }
+
+  /* creator grid */
+  .grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
+  .creator {
+    background: var(--surface); border: 2px solid var(--ink); border-radius: var(--radius);
+    padding: 18px; display: grid; gap: 14px; align-content: start; min-width: 0; box-shadow: var(--shadow);
+  }
+  .creator header { display: flex; gap: 14px; align-items: center; }
+  .creator header svg { width: 64px; height: 64px; flex: none; }
+  .creator h3 { font-size: 22px; }
+  .creator .handle { color: var(--muted); font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
+  .creator .bio { font-size: 15px; }
+  .stats { margin: 0; display: grid; gap: 6px; font-size: 13px; }
+  .stats div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dashed var(--line); padding-bottom: 6px; }
+  .stats dt { color: var(--muted); }
+  .stats dd { margin: 0; font: 700 14px/1.3 var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
+
+  .locked { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); }
+  .locked p { padding: 14px; font-size: 15px; filter: blur(6px); user-select: none; transition: filter 0.4s ease; }
+  .locked .veil {
+    position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 10px;
+    background: var(--veil); font: 700 12px/1.3 var(--font-body); text-transform: uppercase; letter-spacing: 0.1em;
+    transition: opacity 0.35s ease;
+  }
+  .locked .veil svg { width: 22px; height: 22px; display: block; margin: 0 auto 6px; }
+  .locked.open p { filter: none; user-select: auto; }
+  .locked.open .veil { opacity: 0; pointer-events: none; }
+  .locked.open { border-color: var(--lawn); background: var(--lawn-soft); }
+  .locked .tag { font: 700 11px/1 var(--font-body); letter-spacing: 0.1em; color: var(--accent); display: block; margin-bottom: 6px; }
+
+  .creator .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .creator .actions .btn { flex: 1 1 auto; }
+
+  /* ---------- sketches ---------- */
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .script-wrap { display: grid; gap: 28px; }
+  @media (min-width: 900px) { .script-wrap { grid-template-columns: 260px 1fr; } }
+  .script-aside { display: grid; gap: 12px; align-content: start; }
+  .script-aside .runtime { font: 400 14px/1.5 var(--font-mono); color: var(--muted); }
+  .script {
+    background: var(--surface); border: 2px solid var(--ink); border-radius: 4px; min-width: 0;
+    padding: clamp(20px, 4vw, 48px); font: 400 16px/1.6 var(--font-mono); max-width: 760px;
+  }
+  .script .slug { font-weight: 700; text-transform: uppercase; margin-bottom: 18px; }
+  .script .act { margin-bottom: 16px; }
+  .script .line { margin: 0 auto 16px; max-width: 34em; padding-left: clamp(0px, 8vw, 96px); }
+  .script .char { display: block; text-transform: uppercase; font-weight: 700; padding-left: clamp(0px, 6vw, 80px); }
+  .script .paren { display: block; color: var(--muted); padding-left: clamp(0px, 3vw, 40px); }
+  .script .end { text-align: right; font-weight: 700; text-transform: uppercase; margin-top: 8px; }
+
+  /* ---------- quiz ---------- */
+  .quiz { display: grid; gap: 24px; }
+  @media (min-width: 900px) { .quiz { grid-template-columns: 1fr 360px; align-items: start; } }
+  .q { border: 0; margin: 0 0 22px; padding: 0; min-width: 0; }
+  .q legend { font-weight: 800; font-size: 18px; margin-bottom: 10px; padding: 0; }
+  .q legend .num { font: 400 14px/1 var(--font-mono); color: var(--accent); margin-right: 8px; }
+  .opts { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); }
+  .opt { position: relative; }
+  .opt input { position: absolute; opacity: 0; inset: 0; }
+  .opt label {
+    display: block; height: 100%; border: 2px solid var(--line); border-radius: 10px; padding: 10px 12px;
+    background: var(--surface); cursor: pointer; font-size: 15px;
+  }
+  .opt input:checked + label { border-color: var(--ink); background: var(--ink); color: var(--bg); }
+  .opt input:focus-visible + label { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .result {
+    background: var(--surface); border: 2px solid var(--ink); border-radius: var(--radius); padding: 20px;
+    box-shadow: 8px 8px 0 var(--accent); display: grid; gap: 12px; justify-items: start; position: sticky; top: 90px;
+  }
+  .result svg { width: 96px; height: 96px; }
+  .result h3 { font-size: 28px; }
+  .result .muted { color: var(--muted); font-size: 14px; }
+
+  /* ---------- pricing ---------- */
+  .tiers { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+  .tier { background: var(--surface); border: 2px solid var(--ink); border-radius: var(--radius); padding: 22px; display: grid; gap: 14px; align-content: start; }
+  .tier.featured { background: var(--ink); color: var(--bg); }
+  .tier.featured .eyebrow, .tier.featured .note { color: var(--line); }
+  .tier .price { font: 400 44px/1 var(--font-display); }
+  .tier .price small { font: 500 14px/1 var(--font-body); }
+  .tier .note { font-size: 13px; color: var(--muted); }
+  .tier ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; font-size: 15px; }
+  .tier li { padding-left: 22px; position: relative; }
+  .tier li::before { content: ""; position: absolute; left: 2px; top: 0.55em; width: 10px; height: 10px; border-radius: 2px; background: var(--accent); transform: rotate(45deg); }
+
+  /* ---------- footer ---------- */
+  footer { border-top: 2px solid var(--ink); padding-block: 36px 48px; font-size: 14px; color: var(--muted); }
+  footer .wrap { display: grid; gap: 20px; }
+  .fine-grid { display: grid; gap: 14px 32px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); }
+  .fine-grid b { color: var(--ink); display: block; margin-bottom: 2px; }
+
+  /* ---------- toast ---------- */
+  .toast {
+    position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); z-index: 50;
+    transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
+    background: var(--ink); color: var(--bg); padding: 12px 18px; border-radius: 12px; max-width: min(92vw, 460px);
+    font-size: 15px; box-shadow: var(--shadow); transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  @media (prefers-reduced-motion: reduce) {
+    .toast, .locked p, .locked .veil, .btn { transition: none; }
+    .post { transform: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="logo" href="#top" aria-label="OnlyDads home">Only<span>Dads</span></a>
+    <nav aria-label="Main">
+      <a class="hide-sm" href="#creators">Creators</a>
+      <a class="hide-sm" href="#sketches">Premieres</a>
+      <a class="hide-sm" href="#quiz">Dad detector</a>
+      <button class="btn" type="button" data-toast="Your password is 'password1'. He set it up for you in 2009 and wrote it on a sticky note on the monitor.">Log in</button>
+    </nav>
+  </div>
+</header>
+
+<div class="ticker" aria-hidden="true">
+  <div class="ticker-track" id="ticker"></div>
+</div>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <p class="eyebrow">Exclusive content · Strictly wholesome · Lights off when you leave</p>
+        <h1>Only<span>Dads</span></h1>
+        <p class="lede">The exclusive platform where fathers share what they do best: grilling, guarding the thermostat, and telling you the same story again.</p>
+        <p class="fine">Every creator is a verified dad. Verification takes one test: we hand him a lawn mower and see if he says "they don't make 'em like they used to."</p>
+        <div class="hero-actions">
+          <a class="btn primary" href="#creators">Browse the dads</a>
+          <a class="btn" href="#sketches">Watch tonight's premiere</a>
+        </div>
+        <div class="online">
+          <span><span class="dot"></span><strong id="online">41,207</strong> dads online</span>
+          <span><strong id="napping">38,950</strong> resting their eyes</span>
+          <span><strong>1</strong> thermostat at 68°F</span>
+        </div>
+      </div>
+
+      <article class="post" aria-label="Featured post">
+        <div class="post-head">
+          <span id="hero-avatar"></span>
+          <div class="who">
+            <div class="name">Thermostat Ron <span class="badge">Certified dad</span></div>
+            <div class="handle">@sixtyeight_ron · 2:14 AM</div>
+          </div>
+        </div>
+        <p class="post-body">Someone in this house set it to 69. I'm not angry. I just want you to know that I know.</p>
+        <div class="post-media">68°<small>CURRENT SETTING · LOCKED BY RON</small></div>
+        <div class="post-meta"><span><b id="likes">2,184</b> likes</span><span>311 sweaters offered</span></div>
+        <div class="comments">
+          <p><b>Linda</b> It was you, Ron. You did it in your sleep.</p>
+          <p><b>Kyle</b> my room is 40 degrees</p>
+          <p><b>Thermostat Ron</b> Put on a sweater, Kyle.</p>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="block" id="creators">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Top creators this week</p>
+          <h2>Meet the dads</h2>
+        </div>
+        <p>Subscribing is free. He insists. If you try to pay, he will physically take your wallet and put it back in your pocket.</p>
+      </div>
+      <div class="filters" role="group" aria-label="Filter dads by habitat" id="filters"></div>
+      <div class="grid" id="grid"></div>
+    </div>
+  </section>
+
+  <section class="block" id="sketches">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">OnlyDads Originals</p>
+          <h2>Tonight's premieres</h2>
+        </div>
+        <p>Short sketches, filmed on location in real garages, hallways and minivans. No stunt doubles. Dad does his own stunts and tells you about it for a decade.</p>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Sketches" id="tabs"></div>
+      <div class="script-wrap">
+        <div class="script-aside" id="script-aside"></div>
+        <article class="script" id="script" role="tabpanel" aria-live="polite"></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="quiz">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Dad detector</p>
+          <h2>Which dad do you have?</h2>
+        </div>
+        <p>Four questions. Scientifically meaningless. Accurate anyway.</p>
+      </div>
+      <div class="quiz">
+        <form id="quiz-form"></form>
+        <aside class="result" id="result" aria-live="polite"></aside>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="pricing">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Membership</p>
+          <h2>Pick a plan</h2>
+        </div>
+        <p>All plans include unlimited unsolicited advice about tire pressure.</p>
+      </div>
+      <div class="tiers">
+        <div class="tier">
+          <p class="eyebrow">Basic</p>
+          <h3>The Nod</h3>
+          <p class="price">$0 <small>/ forever</small></p>
+          <ul>
+            <li>One nod from across the room</li>
+            <li>A firm "Hey, bud"</li>
+            <li>Supervised access to the garage</li>
+          </ul>
+          <button class="btn" type="button" data-toast="Welcome. He nodded at you. That's the whole plan. It means a lot.">Start nodding</button>
+        </div>
+        <div class="tier featured">
+          <p class="eyebrow">Most popular</p>
+          <h3>Proud of You</h3>
+          <p class="price">$4.99 <small>/ month</small></p>
+          <p class="note">He'll ask why it isn't $3.99 like it was in 1998.</p>
+          <ul>
+            <li>One "proud of you, kiddo" per fiscal year</li>
+            <li>Tire-changing lesson (you'll need it again)</li>
+            <li>A hug that ends with two back pats. Always two.</li>
+          </ul>
+          <button class="btn primary" type="button" data-toast="Card declined. He says this is exactly why you always carry cash.">Subscribe</button>
+        </div>
+        <div class="tier">
+          <p class="eyebrow">Platinum</p>
+          <h3>The Recliner</h3>
+          <p class="price">$19.99 <small>/ month</small></p>
+          <ul>
+            <li>Ten minutes holding the remote, supervised</li>
+            <li>A 40-minute talk on how he'd fix the economy</li>
+            <li>Front-row seat at the grill. Don't touch anything.</li>
+          </ul>
+          <button class="btn" type="button" data-toast="Request received. The recliner is occupied until further notice.">Request the recliner</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="logo" href="#top">Only<span>Dads</span></a>
+    <div class="fine-grid">
+      <p><b>Terms of service</b>Turn off the lights when you leave a room. Do we own stock in the electric company? We do not.</p>
+      <p><b>Privacy policy</b>Close the door. Were you born in a barn?</p>
+      <p><b>Refunds</b>Money doesn't grow on trees. He checked. Twice, with a ladder.</p>
+      <p><b>Contact support</b>Shout "DAD" from any room. He'll answer "WHAT" from a different room. Repeat until someone walks over.</p>
+    </div>
+    <p>A comedy parody. No real dads were harmed. Several were mildly inconvenienced when we touched the thermostat.</p>
+  </div>
+</footer>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  /* ---------- little dad faces, drawn in SVG ---------- */
+  function face(o, label) {
+    const hairCol = o.hair || "#8a8a86";
+    const p = [];
+    p.push(`<circle cx="40" cy="40" r="40" fill="${o.bg}"/>`);
+    p.push(`<path d="M8 80 Q12 60 40 58 Q68 60 72 80 Z" fill="${o.shirt}"/>`);
+    if (o.collar) p.push(`<path d="M32 59 L40 68 L48 59" fill="none" stroke="#fffaf0" stroke-width="3" stroke-linejoin="round"/>`);
+    p.push(`<rect x="34" y="50" width="12" height="11" fill="${o.skin}"/>`);
+    p.push(`<circle cx="23" cy="40" r="4" fill="${o.skin}"/><circle cx="57" cy="40" r="4" fill="${o.skin}"/>`);
+    p.push(`<ellipse cx="40" cy="38" rx="17" ry="20" fill="${o.skin}"/>`);
+    if (o.hairStyle === "side") p.push(`<path d="M23 36 Q22 25 27 22 L28 34 Z M57 36 Q58 25 53 22 L52 34 Z" fill="${hairCol}"/>`);
+    if (o.hairStyle === "top") p.push(`<path d="M23 34 Q22 16 40 16 Q58 16 57 34 Q52 24 40 24 Q28 24 23 34 Z" fill="${hairCol}"/>`);
+    if (o.hairStyle === "bald") p.push(`<path d="M31 24 Q36 20 41 21" fill="none" stroke="#ffffff" stroke-opacity=".55" stroke-width="2.5" stroke-linecap="round"/>`);
+    if (o.brows) p.push(`<path d="M31 31 L37 32 M43 32 L49 31" stroke="${hairCol}" stroke-width="2.5" stroke-linecap="round"/>`);
+    if (o.eyes === "closed") p.push(`<path d="M31 38 Q34 40 37 38 M43 38 Q46 40 49 38" fill="none" stroke="#1b1b1b" stroke-width="2" stroke-linecap="round"/>`);
+    else p.push(`<circle cx="34" cy="38" r="2.1" fill="#1b1b1b"/><circle cx="46" cy="38" r="2.1" fill="#1b1b1b"/>`);
+    if (o.glasses === "round") p.push(`<g fill="none" stroke="#1b1b1b" stroke-width="1.8"><circle cx="34" cy="38" r="5.5"/><circle cx="46" cy="38" r="5.5"/><path d="M39.5 38 h1"/></g>`);
+    if (o.glasses === "square") p.push(`<g fill="none" stroke="#1b1b1b" stroke-width="1.8"><rect x="27.5" y="33.5" width="11" height="8.5" rx="1.5"/><rect x="41.5" y="33.5" width="11" height="8.5" rx="1.5"/><path d="M38.5 37 h3"/></g>`);
+    if (o.glasses === "shades") p.push(`<g fill="#16181c"><rect x="27" y="34" width="12" height="7" rx="3"/><rect x="41" y="34" width="12" height="7" rx="3"/><rect x="38" y="35.5" width="4" height="1.6"/></g>`);
+    if (o.stache === "chevron") p.push(`<path d="M31 48 Q40 43 49 48 Q40 50 31 48 Z" fill="${hairCol}"/>`);
+    if (o.stache === "walrus") p.push(`<path d="M29 46 Q40 41 51 46 L50 52 Q45 49 40 50 Q35 49 30 52 Z" fill="${hairCol}"/>`);
+    if (o.stache !== "walrus") p.push(`<path d="M35 51 Q40 55 45 51" fill="none" stroke="#1b1b1b" stroke-width="1.8" stroke-linecap="round"/>`);
+    if (o.hat === "cap") p.push(`<path d="M22 30 Q22 13 40 13 Q58 13 58 30 Z" fill="${o.hatCol}"/><path d="M40 28 Q56 26 66 31 Q55 33 40 31 Z" fill="${o.hatCol}"/><circle cx="40" cy="14" r="1.8" fill="#00000033"/>`);
+    if (o.hat === "bucket") p.push(`<path d="M25 27 Q27 12 40 12 Q53 12 55 27 Z" fill="${o.hatCol}"/><path d="M17 29 Q40 21 63 29 Q40 33 17 29 Z" fill="${o.hatCol}"/>`);
+    if (o.hat === "helmet") p.push(`<path d="M20 30 Q21 11 40 11 Q59 11 60 30 Z" fill="${o.hatCol}"/><path d="M28 14 L30 28 M40 11 V28 M52 14 L50 28" stroke="#00000040" stroke-width="2"/>`);
+    if (o.hat === "headband") p.push(`<rect x="23" y="25" width="34" height="5" rx="2" fill="${o.hatCol}"/>`);
+    return `<svg viewBox="0 0 80 80" role="img" aria-label="${label}"><clipPath id="c${label.replace(/\W/g, "")}"><circle cx="40" cy="40" r="40"/></clipPath><g clip-path="url(#c${label.replace(/\W/g, "")})">${p.join("")}</g></svg>`;
+  }
+
+  const lock = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3" fill="none" stroke="currentColor" stroke-width="2"/><rect x="4.5" y="10" width="15" height="11" rx="2.5" fill="currentColor"/></svg>`;
+
+  /* ---------- the creators ---------- */
+  const HABITATS = [
+    { id: "all", label: "All dads" },
+    { id: "backyard", label: "Backyard" },
+    { id: "indoors", label: "Indoors" },
+    { id: "out", label: "Out & about" },
+    { id: "online", label: "Online" },
+    { id: "projects", label: "Projects" },
+  ];
+
+  const DADS = [
+    {
+      id: "gary", name: "Grill Gary", handle: "@lowandslow_gary", habitat: "backyard",
+      bio: "Pitmaster. Has not left the smoker since Thursday. Will tell you the internal temperature without being asked.",
+      stats: [["Photos of the same brisket", "1,284"], ["Temp updates per hour", "22"], ["Times he said \"low and slow\"", "∞"]],
+      locked: "14-minute video of him poking the coals and whispering \"there she goes.\" Then 6 more minutes of him not letting anyone else near the tongs.",
+      sub: "Subscribed. Gary will text you the internal temp every 20 minutes until Sunday.",
+      face: { bg: "#e9a46b", shirt: "#7a2f1d", skin: "#e8b48f", hair: "#5a4632", hairStyle: "side", glasses: "shades", stache: "chevron", hat: "cap", hatCol: "#1d2838" },
+    },
+    {
+      id: "ron", name: "Thermostat Ron", handle: "@sixtyeight_ron", habitat: "indoors",
+      bio: "Guards the thermostat like it holds nuclear codes. Has a sweater for you. Has several.",
+      stats: [["Degrees allowed above 68°F", "0"], ["\"Do you pay the bill?\"", "9,402"], ["Sweaters offered", "311"]],
+      locked: "He installed a lock box on the thermostat. You get the combination when you turn 35 and start paying for gas yourself.",
+      sub: "Subscribed. Ron has turned the heat down one degree in your honor.",
+      face: { bg: "#9fb8d4", shirt: "#3b5a7a", skin: "#f0c6a4", hair: "#9a9a96", hairStyle: "top", glasses: "square", stache: "none", brows: true, collar: true },
+    },
+    {
+      id: "pete", name: "Pun Pete", handle: "@hi_hungry_im_dad", habitat: "indoors", joke: true,
+      bio: "Professional joke dealer. Laughs at his own material first, and loudest. Has never once read the room.",
+      stats: [["Jokes told", "3,412"], ["Genuine laughs", "2"], ["Groans", "3,410"]],
+      locked: "",
+      sub: "Subscribed. Pete says you're now \"Subscribed\" and he's \"Dad.\" Nice to meet you.",
+      face: { bg: "#f1d36a", shirt: "#2f6e36", skin: "#d9a07a", hair: "#3a2a1e", hairStyle: "top", glasses: "round", stache: "chevron", collar: true },
+    },
+    {
+      id: "larry", name: "Lawn Larry", handle: "@stripes_by_larry", habitat: "backyard",
+      bio: "Mows in diagonal stripes. Knows his grass by its Latin name. Glares at clover like it owes him money.",
+      stats: [["Mows per week", "3"], ["Neighbor lawns judged", "All"], ["Relationship with dandelions", "Hostile"]],
+      locked: "Side-by-side photos of his lawn and Dave's lawn next door. No caption needed. He wrote one anyway: \"Just saying.\"",
+      sub: "Subscribed. Please stay off the grass on your way out.",
+      face: { bg: "#a9cf8f", shirt: "#f2efe4", skin: "#eab995", hair: "#6d5a44", hairStyle: "side", glasses: "none", stache: "none", hat: "bucket", hatCol: "#5d6b3a" },
+    },
+    {
+      id: "frank", name: "Font-Size Frank", handle: "@frank.dad.1958", habitat: "online",
+      bio: "Types with one finger. Signs every text \"Love, Dad.\" Replies to the family group chat with a thumbs up four days later.",
+      stats: [["Font size", "48 pt"], ["Google searches posted to Facebook", "212"], ["\"Can you look at the computer\"", "1,077"]],
+      locked: "A screenshot of his screen, sent as a photo of the screen, taken on an iPad, with the flash on. Caption: \"WHAT IS THIS.\"",
+      sub: "Subscribed. Frank replied: \"OK THANK YOU. LOVE, DAD\"",
+      face: { bg: "#c7b6e0", shirt: "#7d6b4f", skin: "#f0c9a8", hair: "#cfcfca", hairStyle: "side", glasses: "square", stache: "walrus", brows: true },
+    },
+    {
+      id: "randy", name: "Road Trip Randy", handle: "@making_good_time", habitat: "out",
+      bio: "One goal in life: beat the GPS arrival time. Bathroom breaks are a sign of weakness.",
+      stats: [["Minutes ahead of GPS", "23"], ["Bathroom stops approved", "0"], ["\"We just ate\"", "44"]],
+      locked: "A laminated printout of the route from 2004. Still \"better than the phone.\" Coffee stain marks the spot where he took one wrong turn, which he denies.",
+      sub: "Subscribed. You have 90 seconds to use the restroom. He's timing it.",
+      face: { bg: "#f0b5a2", shirt: "#304b6b", skin: "#c99572", hair: "#2a2a2a", hairStyle: "top", glasses: "shades", stache: "none", hat: "cap", hatCol: "#c94f1b" },
+    },
+    {
+      id: "hank", name: "Hardware Hank", handle: "@one_more_trip_hank", habitat: "projects",
+      bio: "Every project needs one more trip to the hardware store. Owns six tape measures. Can find none of them.",
+      stats: [["Store trips per project", "4"], ["Unfinished projects", "17"], ["Employees who know his name", "All"]],
+      locked: "Before-and-after photos of the new shelf. The \"after\" photo is scheduled for next spring.",
+      sub: "Subscribed. Hank's heading out to grab one more thing. Back in 20 minutes. (Back in 3 hours.)",
+      face: { bg: "#f2c56b", shirt: "#c94f1b", skin: "#e2ac86", hair: "#4a3b2c", hairStyle: "side", glasses: "none", stache: "walrus", hat: "helmet", hatCol: "#f0c419" },
+    },
+    {
+      id: "rick", name: "Recliner Rick", handle: "@just_resting_my_eyes", habitat: "indoors",
+      bio: "Asleep in front of the TV. Wakes up the moment you change the channel to say \"I was watching that.\"",
+      stats: [["Naps per day", "4"], ["\"I was watching that\"", "2,991"], ["Remotes under his control", "3"]],
+      locked: "Three full hours of golf. He saw eleven minutes. He'll tell you the whole tournament was \"a nail-biter.\"",
+      sub: "Subscribed. Rick didn't hear you. He's resting his eyes.",
+      face: { bg: "#b9c4cf", shirt: "#8a3b3b", skin: "#f1c7a6", hair: "#a7a7a2", hairStyle: "bald", glasses: "none", stache: "chevron", eyes: "closed" },
+    },
+    {
+      id: "clive", name: "Cyclist Clive", handle: "@watts_up_clive", habitat: "out",
+      bio: "Turned 50, bought a carbon bike and full lycra. Will discuss his wattage at your wedding.",
+      stats: [["Bikes worth more than the car", "1"], ["Coffee stops per ride", "2"], ["Cadence mentions today", "9"]],
+      locked: "Fitness app screenshot: a personal record on the hill behind the bakery. He stopped at the bakery. That part isn't in the screenshot.",
+      sub: "Subscribed. Clive gave you kudos and an unsolicited bike fitting.",
+      face: { bg: "#8fd0c4", shirt: "#e5e24a", skin: "#e9b896", hair: "#7a6a58", hairStyle: "side", glasses: "shades", stache: "none", hat: "helmet", hatCol: "#1d2838" },
+    },
+    {
+      id: "bob", name: "Back-in-My-Day Bob", handle: "@uphill_both_ways", habitat: "online",
+      bio: "Walked to school uphill, both ways, in the snow. The distance grows every year. Forwards chain emails as a public service.",
+      stats: [["Miles to school (1994 telling)", "2"], ["Miles to school (today)", "11"], ["Gas price in 1979, to the cent", "Yes"]],
+      locked: "The full story of the time he bought a soda for a nickel. 45 minutes. No intermission. Ends with \"and we were grateful.\"",
+      sub: "Subscribed. Bob says in his day you subscribed by mailing a postcard.",
+      face: { bg: "#e0c7a0", shirt: "#5b4a7a", skin: "#efc5a0", hair: "#e8e8e2", hairStyle: "side", glasses: "round", stache: "walrus", brows: true, collar: true },
+    },
+    {
+      id: "sal", name: "Sandals Sal", handle: "@socks_and_sandals_sal", habitat: "out",
+      bio: "Fashion icon. White socks, sport sandals, polo tucked into his jeans. Cargo shorts with 11 pockets, all in use.",
+      stats: [["Pockets", "11"], ["Items in pockets", "34"], ["Phone on belt clip", "Yes"]],
+      locked: "Full fit check. White sneakers so clean they reflect the sun. He calls them \"my good shoes\" and wears them to mow.",
+      sub: "Subscribed. Sal pulled a granola bar out of pocket #7 for you.",
+      face: { bg: "#f3a6b8", shirt: "#4e7fb3", skin: "#d8a27c", hair: "#2f2f2f", hairStyle: "top", glasses: "none", stache: "chevron", hat: "visor", collar: true },
+    },
+    {
+      id: "doug", name: "Check-Please Doug", handle: "@its_on_me_doug", habitat: "out",
+      bio: "Asks the waiter \"what's good here?\" then orders the burger. Calculates the tip out loud. Will fight you for the check.",
+      stats: [["Times he said \"it's on me\"", "812"], ["Jokes to the waiter per meal", "3"], ["Check wrestling record", "812–0"]],
+      locked: "Security footage of him and another dad wrestling over a restaurant bill. Both of them won. The waiter lost.",
+      sub: "Subscribed. Doug already paid for it while you were in the bathroom.",
+      face: { bg: "#d6c38e", shirt: "#1d2838", skin: "#b98260", hair: "#1e1e1e", hairStyle: "top", glasses: "square", stache: "chevron", collar: true },
+    },
+  ];
+
+  const JOKES = [
+    "I'm reading a book about anti-gravity. It's impossible to put down.",
+    "Why don't eggs tell jokes? They'd crack each other up.",
+    "I used to hate facial hair, but then it grew on me.",
+    "What do you call a fake noodle? An impasta.",
+    "I only know 25 letters of the alphabet. I don't know y.",
+    "Did you hear about the restaurant on the moon? Great food, no atmosphere.",
+    "I would tell you a joke about construction, but I'm still working on it.",
+    "Why did the scarecrow win an award? He was outstanding in his field.",
+  ];
+
+  const TIPS = [
+    "He tipped you back. Then explained compound interest.",
+    "He calculated 15% out loud. It took four minutes and a napkin.",
+    "\"Don't spend it all in one place.\" He handed it back.",
+    "He'd rather you put that in savings, kiddo.",
+    "He asked if you got a receipt. For tax purposes.",
+  ];
+
+  const TICKER = [
+    "<b>Grill Gary</b> posted 6 new photos of the same brisket",
+    "<b>Thermostat Ron</b> reset the house to 68°F",
+    "<b>Font-Size Frank</b> replied \"k\" to a message from March",
+    "<b>Hardware Hank</b> is on hardware store trip #4",
+    "<b>Recliner Rick</b> is resting his eyes (LIVE)",
+    "<b>Road Trip Randy</b> is 23 minutes ahead of the GPS",
+    "<b>Pun Pete</b> told a joke. Nobody laughed. He laughed.",
+    "<b>Check-Please Doug</b> is fighting someone for the bill",
+    "<b>Lawn Larry</b> is edging the lawn with scissors",
+  ];
+
+  /* the visor is a headband-ish brim; reuse the headband shape in the dad's shirt color */
+  DADS.forEach((d) => { if (d.face.hat === "visor") { d.face.hat = "headband"; d.face.hatCol = "#f2efe4"; } });
+
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+
+  /* toast */
+  const toastEl = $("#toast");
+  let toastTimer;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), 3600);
+  }
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-toast]");
+    if (t) toast(t.dataset.toast);
+  });
+
+  /* ticker (doubled so the loop is seamless) */
+  $("#ticker").innerHTML = [...TICKER, ...TICKER].map((t) => `<span>${t}</span>`).join("");
+
+  /* hero */
+  $("#hero-avatar").innerHTML = face(DADS[1].face, "Thermostat Ron");
+
+  /* creator cards */
+  const subscribed = new Set();
+  let filter = "all";
+  let jokeIdx = 0;
+
+  function card(d) {
+    const isSub = subscribed.has(d.id);
+    const lockedText = d.joke ? JOKES[jokeIdx % JOKES.length] : d.locked;
+    return `
+      <article class="creator" data-id="${d.id}">
+        <header>
+          ${face(d.face, d.name)}
+          <div style="min-width:0">
+            <h3>${esc(d.name)}</h3>
+            <div class="handle">${esc(d.handle)} · <span class="badge">Certified dad</span></div>
+          </div>
+        </header>
+        <p class="bio">${esc(d.bio)}</p>
+        <dl class="stats">${d.stats.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>
+        <div class="locked${isSub ? " open" : ""}">
+          <p><span class="tag">${d.joke ? "EXCLUSIVE JOKE" : "EXCLUSIVE POST"}</span>${esc(lockedText)}</p>
+          <div class="veil" aria-hidden="${isSub}">${lock}Subscribe to unlock</div>
+        </div>
+        <div class="actions">
+          ${isSub && d.joke
+            ? `<button class="btn primary" type="button" data-act="joke">Unlock another one</button>`
+            : `<button class="btn ${isSub ? "done" : "primary"}" type="button" data-act="sub" aria-pressed="${isSub}">${isSub ? "Subscribed" : "Subscribe · free, he insists"}</button>`}
+          <button class="btn" type="button" data-act="tip">Tip</button>
+        </div>
+      </article>`;
+  }
+
+  function renderFilters() {
+    $("#filters").innerHTML = HABITATS.map((h) => {
+      const n = h.id === "all" ? DADS.length : DADS.filter((d) => d.habitat === h.id).length;
+      return `<button class="chip" type="button" data-f="${h.id}" aria-pressed="${filter === h.id}">${h.label}<span class="n">${n}</span></button>`;
+    }).join("");
+  }
+
+  function renderGrid() {
+    $("#grid").innerHTML = DADS.filter((d) => filter === "all" || d.habitat === filter).map(card).join("");
+  }
+
+  $("#filters").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-f]");
+    if (!b) return;
+    filter = b.dataset.f;
+    renderFilters();
+    renderGrid();
+  });
+
+  $("#grid").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-act]");
+    if (!b) return;
+    const d = DADS.find((x) => x.id === b.closest(".creator").dataset.id);
+    if (b.dataset.act === "tip") return toast(pick(TIPS));
+    if (b.dataset.act === "joke") {
+      jokeIdx++;
+      renderGrid();
+      return toast(pick(["He's laughing so hard he can't finish.", "He told that one at your graduation.", "He's waiting for you to laugh.", "He's going to tell it again in case you missed it."]));
+    }
+    if (subscribed.has(d.id)) {
+      subscribed.delete(d.id);
+      toast(`Unsubscribed. ${d.name.split(" ").pop()} isn't mad. Just disappointed.`);
+    } else {
+      subscribed.add(d.id);
+      toast(d.sub);
+    }
+    renderGrid();
+  });
+
+  renderFilters();
+  renderGrid();
+
+  /* ---------- sketches ---------- */
+  const SKETCHES = [
+    {
+      id: "thermostat", title: "Who Touched the Thermostat", star: "Thermostat Ron", runtime: "4 min · Rated D for Dad",
+      blurb: "A one-degree change. A dark hallway. A father who can feel the furnace in his knees.",
+      body: [
+        ["slug", "INT. SUBURBAN HALLWAY — 2:14 AM"],
+        ["act", "A single beep from the hallway. RON (58) sits up in bed like a dog hearing a can opener."],
+        ["line", "RON", "", "Sixty-nine."],
+        ["line", "LINDA", "(asleep)", "Go back to sleep."],
+        ["line", "RON", "", "Somebody moved it one degree, Linda. One. I felt it in my knees."],
+        ["act", "He walks the hallway in socks with a flashlight. He does not turn on the lights. Lights cost money."],
+        ["act", "CLOSE ON: the thermostat. It glows 69°."],
+        ["line", "RON", "(whispering)", "Who did this to you."],
+        ["act", "KYLE (16) appears in a doorway wearing a hoodie, under a blanket, under another blanket."],
+        ["line", "KYLE", "", "Dad, it's like forty degrees in my room."],
+        ["line", "RON", "", "Then put on a sweater. That's what they're for. That's the whole technology."],
+        ["line", "KYLE", "", "I'm wearing two sweaters."],
+        ["line", "RON", "(beat, moved)", "Then you're ready for winter. Proud of you, son."],
+        ["act", "He sets it back to 68. The furnace sighs. So does Kyle."],
+        ["end", "Cut to black."],
+      ],
+    },
+    {
+      id: "hardware", title: "Trip Number Four", star: "Hardware Hank", runtime: "3 min · Contains mild DIY",
+      blurb: "One shelf. Twenty minutes, tops. A man and the hardware store employee who has seen it all.",
+      body: [
+        ["slug", "INT. HARDWARE STORE — AISLE 14 — SATURDAY, 4:52 PM"],
+        ["act", "HANK (52) holds two identical screws up to the light like a jeweler."],
+        ["line", "MARIA", "(store employee)", "Back again, Hank?"],
+        ["line", "HANK", "", "Fourth time today. Personal best is six."],
+        ["line", "MARIA", "", "What's the project?"],
+        ["line", "HANK", "", "One shelf. Twenty minutes, tops."],
+        ["line", "MARIA", "", "You said that in April."],
+        ["line", "HANK", "", "And I stand by it. Twenty minutes of actual work. The rest is research."],
+        ["act", "He drops both screws into his basket. Then a third one, \"for safety.\""],
+        ["line", "MARIA", "", "Do you need a tape measure?"],
+        ["line", "HANK", "", "I've got six at home."],
+        ["line", "MARIA", "", "Do you know where any of them are?"],
+        ["line", "HANK", "(long pause)", "Ring me up for one more."],
+        ["end", "Cut to black."],
+      ],
+    },
+    {
+      id: "roadtrip", title: "Making Good Time", star: "Road Trip Randy", runtime: "5 min · Filmed at 74 mph",
+      blurb: "Six hours in. Arrival time 4:12. A father, a minivan and a bladder that is not his own.",
+      body: [
+        ["slug", "INT. MINIVAN — INTERSTATE — HOUR SIX"],
+        ["act", "RANDY (47) grips the wheel at ten and two. His eyes never leave the GPS."],
+        ["line", "RANDY", "", "Arrival time 4:12. We're going to beat it, people."],
+        ["line", "MAYA", "(9, backseat)", "I have to go to the bathroom."],
+        ["line", "RANDY", "", "You went in Nebraska."],
+        ["line", "MAYA", "", "That was Iowa."],
+        ["line", "RANDY", "", "Then you've already seen a bathroom this trip. They're all the same."],
+        ["line", "JEN", "(passenger seat)", "Randy."],
+        ["act", "A long silence. Randy signals, defeated, into a gas station."],
+        ["line", "RANDY", "", "Everybody out. You have ninety seconds. I'm timing it."],
+        ["act", "The family scatters. Randy stays in the car. The GPS now says 4:15. He stares at it the way other men stare at the sea."],
+        ["end", "Cut to black."],
+      ],
+    },
+  ];
+  let sketch = 0;
+
+  function renderSketch() {
+    const s = SKETCHES[sketch];
+    $("#tabs").innerHTML = SKETCHES.map((x, i) =>
+      `<button class="chip" type="button" role="tab" id="tab-${x.id}" aria-selected="${i === sketch}" aria-pressed="${i === sketch}" data-s="${i}">${esc(x.title)}</button>`
+    ).join("");
+    const star = DADS.find((d) => d.name === s.star);
+    $("#script-aside").innerHTML = `
+      <div style="width:88px">${face(star.face, star.name)}</div>
+      <p class="eyebrow">Starring</p>
+      <h3 style="font-size:26px">${esc(s.star)}</h3>
+      <p>${esc(s.blurb)}</p>
+      <p class="runtime">${esc(s.runtime)}</p>`;
+    $("#script").setAttribute("aria-labelledby", `tab-${s.id}`);
+    $("#script").innerHTML = s.body.map((b) => {
+      if (b[0] === "slug") return `<p class="slug">${esc(b[1])}</p>`;
+      if (b[0] === "act") return `<p class="act">${esc(b[1])}</p>`;
+      if (b[0] === "end") return `<p class="end">${esc(b[1])}</p>`;
+      return `<p class="line"><span class="char">${esc(b[1])}</span>${b[2] ? `<span class="paren">${esc(b[2])}</span>` : ""}${esc(b[3])}</p>`;
+    }).join("");
+  }
+  $("#tabs").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-s]");
+    if (!b) return;
+    sketch = Number(b.dataset.s);
+    renderSketch();
+  });
+  renderSketch();
+
+  /* ---------- quiz ---------- */
+  const QUIZ = [
+    { q: "It's Saturday, 7 a.m. Where is he?", a: [
+      ["Outside, already sweating over the lawn", "larry"],
+      ["At the hardware store. Again.", "hank"],
+      ["In the recliner, eyes closed, TV on", "rick"],
+      ["In full lycra, clipping into his pedals", "clive"],
+    ] },
+    { q: "You ask him for help with your phone. He…", a: [
+      ["Holds it at arm's length and squints", "frank"],
+      ["Says phones used to have cords and it was fine", "bob"],
+      ["Makes a joke about it before helping", "pete"],
+      ["Asks why the house feels warm", "ron"],
+    ] },
+    { q: "Family road trip. What's his priority?", a: [
+      ["Beating the GPS arrival time", "randy"],
+      ["Stopping at every barbecue joint on the way", "gary"],
+      ["The snacks hidden in his 11-pocket shorts", "sal"],
+      ["Paying for everyone's lunch, by force", "doug"],
+    ] },
+    { q: "Pick his catchphrase.", a: [
+      ["\"Do you pay the electric bill?\"", "ron"],
+      ["\"I was watching that.\"", "rick"],
+      ["\"Hi hungry, I'm Dad.\"", "pete"],
+      ["\"Twenty minutes, tops.\"", "hank"],
+    ] },
+  ];
+  const VERDICTS = {
+    gary: "He shows love through smoked meat and temperature updates. Bring an appetite and a free afternoon.",
+    ron: "He loves you very much. He also wants you to close the door because you're letting the heat out.",
+    pete: "Every meal comes with a pun. You've stopped groaning. He's counting that as a win.",
+    larry: "His lawn is his legacy. You are second, narrowly, after the lawn.",
+    frank: "He will call you to ask how to make the text bigger. The text is already 48 point.",
+    randy: "He loves the family. He loves arriving early slightly more.",
+    hank: "The shelf will be done any day now. He has the right screws. Probably.",
+    rick: "He's not asleep. He's resting his eyes. He'll prove it by describing a show he didn't see.",
+    clive: "He's very fit now and wants everyone to know. Ask about his cadence. Actually, don't.",
+    bob: "You owe him a lot. Including, by his math, an 11-mile walk to school.",
+    sal: "His fashion is a statement. The statement is \"I'm comfortable and I have snacks.\"",
+    doug: "He will never let you pay. Not at dinner, not at your wedding, not in this life.",
+  };
+
+  $("#quiz-form").innerHTML = QUIZ.map((item, qi) => `
+    <fieldset class="q">
+      <legend><span class="num">Q${qi + 1}</span>${esc(item.q)}</legend>
+      <div class="opts">
+        ${item.a.map(([label, id], ai) => `
+          <div class="opt">
+            <input type="radio" name="q${qi}" id="q${qi}a${ai}" value="${id}">
+            <label for="q${qi}a${ai}">${esc(label)}</label>
+          </div>`).join("")}
+      </div>
+    </fieldset>`).join("");
+
+  function renderResult() {
+    const answers = QUIZ.map((_, qi) => {
+      const c = document.querySelector(`input[name="q${qi}"]:checked`);
+      return c ? c.value : null;
+    });
+    const done = answers.filter(Boolean).length;
+    if (done === 0) {
+      const sample = DADS[7];
+      $("#result").innerHTML = `
+        <p class="eyebrow">Your result</p>
+        ${face(sample.face, "Mystery dad")}
+        <h3>Answer to find out</h3>
+        <p class="muted">Pick an answer in each question. Results update as you go. Your dad is probably asleep, so take your time.</p>`;
+      return;
+    }
+    const tally = {};
+    answers.forEach((a) => { if (a) tally[a] = (tally[a] || 0) + 1; });
+    const lastAnswered = [...answers].reverse().find(Boolean);
+    const best = Object.keys(tally).sort((a, b) => tally[b] - tally[a] || (b === lastAnswered) - (a === lastAnswered))[0];
+    const d = DADS.find((x) => x.id === best);
+    $("#result").innerHTML = `
+      <p class="eyebrow">${done < QUIZ.length ? `Early reading · ${done} of ${QUIZ.length}` : "Final result"}</p>
+      ${face(d.face, d.name)}
+      <h3>You have ${esc(d.name)}</h3>
+      <p>${esc(VERDICTS[d.id])}</p>
+      <p class="muted">${esc(d.handle)}</p>
+      <a class="btn primary" href="#creators" data-jump="${d.id}">See his profile</a>`;
+  }
+  $("#quiz-form").addEventListener("change", renderResult);
+  $("#result").addEventListener("click", (e) => {
+    const a = e.target.closest("[data-jump]");
+    if (!a) return;
+    filter = "all";
+    renderFilters();
+    renderGrid();
+    e.preventDefault();
+    const el = document.querySelector(`.creator[data-id="${a.dataset.jump}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
+      el.querySelector("[data-act]").focus({ preventScroll: true });
+    }
+  });
+  renderResult();
+
+  /* ---------- live-ish numbers ---------- */
+  const fmt = (n) => n.toLocaleString("en-US");
+  let online = 41207, napping = 38950, likes = 2184;
+  setInterval(() => {
+    online += Math.round(Math.random() * 6 - 2);
+    napping = Math.min(online - 1, napping + Math.round(Math.random() * 7 - 1));
+    likes += Math.random() < 0.6 ? 1 : 0;
+    $("#online").textContent = fmt(online);
+    $("#napping").textContent = fmt(napping);
+    $("#likes").textContent = fmt(likes);
+  }, 2200);
+})();
+</script>
+</body>
+</html>
